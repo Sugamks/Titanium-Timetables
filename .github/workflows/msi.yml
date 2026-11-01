@@ -1,0 +1,72 @@
+name: MSI
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/api/requirements.txt
+          python -m pip install "pyinstaller>=6.10"
+
+      - name: Install WiX
+        run: |
+          winget install --id WiXToolset.WiXCLI --exact --disable-interactivity --accept-package-agreements --accept-source-agreements
+          $wix = Get-Command wix -ErrorAction SilentlyContinue
+          if (-not $wix) {
+            $wix = Get-ChildItem -Path "${env:ProgramFiles}\WiX Toolset*","${env:LOCALAPPDATA}\Microsoft\WinGet" -Recurse -Filter wix.exe -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if (-not $wix) { throw "wix.exe was not found after install" }
+          $dir = if ($wix.Source) { Split-Path $wix.Source } else { $wix.DirectoryName }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
+      - name: Point updates at this repository
+        shell: pwsh
+        run: |
+          Set-Content -Path apps\api\app\update_target.py -Encoding utf8 -Value "GITHUB_REPO = `"${{ github.repository }}`"`n"
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $match = Select-String -Path apps\api\app\version.py -Pattern 'APP_VERSION = "([^"]+)"' | Select-Object -First 1
+          if (-not $match) { throw "APP_VERSION was not found" }
+          $version = $match.Matches[0].Groups[1].Value
+          powershell -ExecutionPolicy Bypass -File apps\desktop\package-windows.ps1 -Version $version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TitaniumTimetables-msi
+          path: dist/TitaniumTimetables.msi
+          if-no-files-found: error
+
+      - name: Attach MSI to the GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/TitaniumTimetables.msi --clobber

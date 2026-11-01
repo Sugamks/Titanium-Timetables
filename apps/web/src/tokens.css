@@ -1,0 +1,64 @@
+:root {
+  color-scheme: light;
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem; --text-2xl: 1.728rem; --text-3xl: 2.074rem;
+  --text-display-s: 1.44rem; --text-display: 1.728rem; --text-section: 1.2rem; --text-title: 1rem; --text-lead: 1rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --color-error: oklch(52% 0.19 27); --color-success: oklch(50% 0.12 150);
+  --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+  --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
+  --color-paper: oklch(98% 0.004 260); --color-paper-2: oklch(95.5% 0.006 260); --color-paper-3: oklch(100% 0.002 260);
+  --color-ink: oklch(22% 0.02 264); --color-ink-2: oklch(32% 0.02 264); --color-muted: oklch(46% 0.02 260);
+  --color-rule: oklch(88% 0.012 260);
+  --color-accent: oklch(46% 0.2 264); --color-accent-2: oklch(58% 0.205 33); --color-accent-2-deep: oklch(50% 0.19 31); --color-accent-3: oklch(85% 0.165 92);
+  --color-accent-ink: oklch(96% 0.012 82); --color-focus: oklch(46% 0.2 264);
+  --font-display: "Jost", "Futura", sans-serif; --font-body: "Karla", ui-sans-serif, system-ui, sans-serif;
+  --font-outlier: "JetBrains Mono", ui-monospace, monospace;
+  --radius-card: 0; --radius-pill: 0; --rule-hair: 1px; --rule-bar: 2px; --rule-box: 3px;
+  --shadow-card: none;
+  --tracking-display: -0.005em; --display-weight: 700;
+  --color-period-short: var(--color-accent-3);
+  --color-period-lunch: var(--color-accent-2);
+  --app-bg: var(--color-paper);
+  --app-card: var(--color-paper-3);
+  --app-input: var(--color-paper-3);
+  --app-muted-bg: var(--color-paper-2);
+  --app-hover: var(--color-paper-2);
+  --app-border: var(--color-ink);
+  --app-text: var(--color-ink);
+  --app-muted: var(--color-muted);
+  --app-sidebar: var(--color-paper);
+  --app-sidebar-text: var(--color-ink);
+  --app-sidebar-muted: var(--color-muted);
+  --app-sidebar-border: var(--color-ink);
+  --app-sidebar-hover: var(--color-paper-2);
+  --app-sidebar-control: var(--color-paper-3);
+  --app-select: var(--color-ink);
+  --app-scroll: var(--color-rule);
+  --app-scroll-hover: var(--color-ink);
+  --clock-face: var(--color-paper-3);
+  --clock-face-stroke: var(--color-ink);
+  --clock-dot: var(--color-paper);
+  --clock-dot-stroke: var(--color-ink);
+  --clock-numeral: var(--color-ink);
+  --clock-accent: var(--color-accent);
+}
+
+/* Blackboard colourway. Hue stays. Elevation steps lighter. */
+html.dark {
+  color-scheme: dark;
+  --color-paper: oklch(17% 0.008 60);
+  --color-paper-2: oklch(21% 0.01 60);
+  --color-paper-3: oklch(25% 0.012 62);
+  --color-ink: oklch(93% 0.015 80);
+  --color-ink-2: oklch(86% 0.014 78);
+  --color-muted: oklch(74% 0.016 75);
+  --color-rule: oklch(38% 0.01 60);
+  --color-accent: oklch(62% 0.16 264);
+  --color-accent-2: oklch(66% 0.16 33);
+  --color-accent-2-deep: oklch(58% 0.16 31);
+  --color-accent-3: oklch(84% 0.14 92);
+  --color-accent-ink: oklch(16% 0.01 60);
+  --color-focus: oklch(70% 0.14 264);
+}
