@@ -17,7 +17,7 @@
         CloseMessage="yes"
         EndSessionMessage="yes"
         RebootPrompt="no"
-        TerminateProcess="yes"
+        TerminateProcess="0"
         Timeout="5" />
 
     <StandardDirectory Id="LocalAppDataFolder">

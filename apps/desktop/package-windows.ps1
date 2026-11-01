@@ -53,7 +53,7 @@ Install WiX, then run this script again with -SkipBuild:
 $WixExe = if ($Wix.Source) { $Wix.Source } else { $Wix.FullName }
 
 Write-Host "Building $Msi"
-& $WixExe extension add WixToolset.Util.wixext
+& $WixExe extension add --acceptEula wix7 WixToolset.Util.wixext
 if ($LASTEXITCODE -ne 0) { throw "wix extension add failed" }
 & $WixExe build --acceptEula wix7 -ext WixToolset.Util.wixext -bindpath "SourceDir=$Stage" -d "Version=$Version" -o $Msi $Wxs
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
