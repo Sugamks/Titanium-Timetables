@@ -10,6 +10,7 @@ import ErrorBanner from "../ui/ErrorBanner";
 import { chipStyle } from "../ui/colors";
 import { inputClass } from "../ui/SearchSelect";
 import { shortFromName } from "../ui/shortName";
+import SaveFileButton from "../ui/TimetableFile";
 
 function apiError(e: any): string {
   const d = e?.detail;
@@ -316,6 +317,7 @@ export default function TimetablePage() {
       });
       setPreviewReady(false);
       await refreshTemplate();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -329,6 +331,7 @@ export default function TimetablePage() {
       await api(`/v1/periods/${pid}`, { method: "PATCH", body: JSON.stringify(body) });
       setPreviewReady(false);
       await refreshTemplate();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -342,6 +345,7 @@ export default function TimetablePage() {
         body: JSON.stringify({ times: { [periodId]: body } }),
       });
       await refreshTemplate();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -354,6 +358,7 @@ export default function TimetablePage() {
       await api(`/v1/periods/${pid}`, { method: "DELETE" });
       setPreviewReady(false);
       await refreshTemplate();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -391,6 +396,7 @@ export default function TimetablePage() {
       if (created?.id) setCurrentYearId(created.id);
       notifyCatalog();
       await loadYears();
+      toast("Saved");
     } catch (error: any) {
       setErr(error.message || "Could not add year");
     } finally {
@@ -407,9 +413,10 @@ export default function TimetablePage() {
             <PageHelp page="templates" />
           </div>
           <p className="text-slate-500 text-sm mt-1 max-w-xl">
-            Create bell-time templates here. Deleting a template hides it from Construct; it can be restored.
+            Create bell-time templates here. Save writes year-template.ttl. Teachers, classes, and subjects stay in this app. Bell times, constraints, and rules are saved in the file.
           </p>
         </div>
+        <SaveFileButton yearId={currentYearId()} templateId={selectedId} />
         <form onSubmit={addYear} className="flex shrink-0 gap-2 items-end">
             <label className="text-xs text-slate-500 w-36 shrink-0">
               New academic year
@@ -844,7 +851,7 @@ export default function TimetablePage() {
                   <option key={v.id} value={v.id}>{selected.name} v{v.number} ({v.status})</option>
                 ))}
               </select>
-              <button disabled={deleted} onClick={() => api(`/v1/versions/${versionId}/approve`, { method: "POST" })} className="border rounded px-3 py-1 text-sm disabled:opacity-50">Approve</button>
+              <button disabled={deleted} onClick={() => api(`/v1/versions/${versionId}/approve`, { method: "POST" }).then(() => toast("Saved")).catch((e: any) => setErr(e.message))} className="border rounded px-3 py-1 text-sm disabled:opacity-50">Approve</button>
               <button disabled={deleted} onClick={saveTimetable} className="bg-indigo-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50">Save</button>
               <button disabled={deleted || !selectedId} onClick={() => runCheck(selectedId)} className="border rounded px-3 py-1 text-sm disabled:opacity-50">Check</button>
               <IconButton icon="view" label="View timetable" variant="bordered" href={`/v1/reports/timetable.html?version_id=${versionId}`} target="_blank" rel="noreferrer" />

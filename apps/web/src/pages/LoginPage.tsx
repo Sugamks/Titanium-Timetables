@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { profileFromMe, useAuth } from "../auth";
 import ErrorBanner from "../ui/ErrorBanner";
@@ -8,14 +8,12 @@ import UpdateOffer from "../ui/UpdateOffer";
 export default function LoginPage() {
   const { setToken, setUser } = useAuth();
   const nav = useNavigate();
-  const [params] = useSearchParams();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [institution, setInstitution] = useState("");
   const [allowDev, setAllowDev] = useState(false);
-  const code = params.get("code");
 
   useEffect(() => {
     api<{ institution?: string; poc_mode?: boolean }>("/health", {}, { busy: false })
@@ -34,25 +32,10 @@ export default function LoginPage() {
       email?: string;
       username?: string;
       roles?: string[];
-      erp_staff_id?: number;
     }>("/v1/me");
     setUser(profileFromMe(me, roles));
     nav(me.can_construct ? "/timetable" : "/mine");
   }
-
-  async function exchangeCode(c: string) {
-    const r = await api<{ token: string; roles?: string[] }>("/v1/auth/erp-exchange", {
-      method: "POST",
-      body: JSON.stringify({ code: c }),
-    });
-    await enter(r.token, r.roles);
-  }
-
-  useEffect(() => {
-    if (code) {
-      exchangeCode(code).catch((e: any) => setErr(e.message));
-    }
-  }, [code]);
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -78,11 +61,10 @@ export default function LoginPage() {
       <div className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-md">
         <h1 className="text-2xl font-semibold">Scheduling Platform</h1>
         {institution && <p className="text-sm font-medium text-slate-800 mt-1">{institution}</p>}
-        <p className="text-slate-500 mt-1 text-sm">Sign in with the same username and password you use in Oxygen ERP.</p>
-        {code && <p className="text-sm text-slate-500 mt-3">Exchanging ERP launch code…</p>}
+        <p className="text-slate-500 mt-1 text-sm">Sign in with your username and password.</p>
         <form onSubmit={signIn} className="mt-6 space-y-3">
           <label className="block text-sm">
-            ERP username
+            Username
             <input
               className="mt-1 w-full border rounded-md px-3 py-2"
               value={username}
@@ -127,7 +109,7 @@ export default function LoginPage() {
               }
             }}
           >
-            Open without ERP
+            Dev sign in
           </button>
         )}
         <ErrorBanner className="mt-3" message={err} onClear={() => setErr("")} />

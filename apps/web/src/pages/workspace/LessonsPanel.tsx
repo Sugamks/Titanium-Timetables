@@ -161,6 +161,7 @@ export default function LessonsPanel({
         }),
       });
       await onChanged();
+      onMessage("Saved");
     } catch (e: any) {
       onError(e.message);
     } finally {
@@ -336,6 +337,7 @@ export default function LessonsPanel({
       await api(`/v1/lessons/${id}`, { method: "DELETE" });
       if (openId === id) setOpenId("");
       await onChanged();
+      onMessage("Saved");
     } catch (e: any) {
       onError(e.message);
     } finally {

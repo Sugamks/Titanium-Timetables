@@ -9,6 +9,7 @@ import LessonsPanel from "./workspace/LessonsPanel";
 import SchoolLists from "./workspace/SchoolLists";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
+import SaveFileButton from "../ui/TimetableFile";
 const TEMPLATE_KEY = "construct-template-id";
 
 type Tab = "teachers" | "classes" | "subjects" | "lessons" | "grid";
@@ -169,12 +170,13 @@ export default function WorkspacePage() {
  return (
  <div className="h-full min-h-0 flex flex-col gap-4">
  <header className="shrink-0 flex flex-wrap justify-between gap-4 items-start">
+ <div className="min-w-0 flex-1">
  <div className="flex items-center gap-2">
  <h1 className="text-2xl font-semibold text-slate-900">Timetable</h1>
  <PageHelp page="workspace" />
  </div>
  <p className="text-slate-500 text-sm mt-1 max-w-2xl">
- Subjects are global. Lessons and generate belong to a template — pick it on those tabs.
+ Teachers, classes, and subjects stay in this app. Save writes year-template.ttl with that template's bell times, constraints, and rules.
  </p>
  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-sm text-slate-600">
  <span><strong className="text-slate-900">{yearSections.length}</strong> classes</span>
@@ -184,6 +186,8 @@ export default function WorkspacePage() {
  <span><strong className="text-slate-900">{placedHint}</strong> weekly cards</span>
  {yearName && <span className="text-slate-400">{yearName}</span>}
  </div>
+ </div>
+ <SaveFileButton yearId={yearId} templateId={templateId} />
  </header>
 
  <ErrorBanner className="shrink-0" message={err} onClear={() => setErr("")} />

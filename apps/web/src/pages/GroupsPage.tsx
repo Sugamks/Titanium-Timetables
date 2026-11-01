@@ -5,6 +5,7 @@ import { IconButton } from "../ui/icons";
 import PageHelp from "../ui/PageHelp";
 import SearchSelect, { Field, inputClass, MultiSearchSelect } from "../ui/SearchSelect";
 import { currentYearId, onYearChange, timetablesUrl } from "../year";
+import { useToast } from "../ui/Toast";
 const TEMPLATE_KEY = "construct-template-id";
 
 function onTemplate(item: { time_grid_id?: string; time_grid_ids?: string[] }, gridId: string) {
@@ -33,6 +34,7 @@ export default function GroupsPage() {
  }
  });
  const [err, setErr] = useState("");
+ const toast = useToast();
  const [missing, setMissing] = useState<string[]>([]);
  const [saving, setSaving] = useState("");
  const [bandName, setBandName] = useState("");
@@ -187,6 +189,7 @@ export default function GroupsPage() {
  setBandSubjects([]);
  setBandSections([]);
  await load();
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  setMissing(missingFromError(e));
@@ -232,6 +235,7 @@ export default function GroupsPage() {
  try {
  await api(`/v1/bands/${b.id}`, { method: "DELETE" });
  await load();
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  }
@@ -275,6 +279,7 @@ export default function GroupsPage() {
  });
  setGroupName("");
  await load();
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  } finally {
@@ -308,6 +313,7 @@ export default function GroupsPage() {
  try {
  await api(`/v1/groups/${g.id}`, { method: "DELETE" });
  await load();
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  }

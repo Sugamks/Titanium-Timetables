@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { api } from "../api";
 import PageHelp from "../ui/PageHelp";
+import { useToast } from "../ui/Toast";
 
 export default function AiPage() {
  const [prompt, setPrompt] = useState("Don' schedule Physics on Friday.");
  const [result, setResult] = useState<any>(null);
  const [msg, setMsg] = useState("");
+ const toast = useToast();
 
  async function run(e: React.FormEvent) {
  e.preventDefault();
@@ -18,6 +20,7 @@ export default function AiPage() {
  if (!result?.id) return;
  const r = await api(`/v1/ai/commands/${result.id}/apply`, { method: "POST" });
  setMsg(JSON.stringify(r));
+ toast("Saved");
  }
 
  return (

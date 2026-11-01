@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { useAuth } from "../auth";
+import { profileFromMe, useAuth } from "../auth";
 import { useTheme } from "../theme";
 import UpdateOffer from "../ui/UpdateOffer";
 import { IconButton, icons, type ActionIcon } from "../ui/icons";
@@ -24,6 +24,9 @@ export default function AppShell() {
       return false;
     }
   });
+  const location = useLocation();
+  const navTo = useNavigate();
+  const needsProfile = !user?.username;
   const canConstruct = user?.can_construct !== false && (user?.can_construct || !user);
 
   const nav: NavGroup[] = canConstruct
@@ -59,14 +62,7 @@ export default function AppShell() {
 
   useEffect(() => {
     api("/v1/me")
-      .then((m) =>
-        setUser({
-          name: m.name,
-          roles: m.roles || [],
-          erp_staff_id: m.erp_staff_id,
-          can_construct: !!m.can_construct,
-        })
-      )
+      .then((m) => setUser(profileFromMe(m)))
       .catch(() => undefined);
     api("/v1/catalog")
       .then((c) => {
@@ -117,8 +113,10 @@ export default function AppShell() {
           <div className={`flex items-start ${collapsed ? "flex-col items-center gap-2" : "justify-between gap-2"}`}>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="text-xs uppercase tracking-wider app-sidebar-muted">Oxygen</div>
-                <div className="font-semibold text-lg">Scheduling</div>
+                <div className="font-semibold text-[13px] leading-tight whitespace-nowrap">TITANIUM TIMETABLES</div>
+                <div className="mt-0.5 text-[11px] leading-tight whitespace-nowrap app-sidebar-muted">
+                  Powered by <a href="https://nextelement.in/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 text-indigo-600 dark:text-indigo-300 hover:text-indigo-500">Next Element</a>
+                </div>
               </div>
             )}
             <IconButton
@@ -185,24 +183,44 @@ export default function AppShell() {
           ))}
         </nav>
         <div className="flex-shrink-0 border-t app-sidebar-line p-2.5">
-          <div className={`flex gap-1 ${collapsed ? "flex-col items-center" : ""}`}>
             <button
               type="button"
-              onClick={toggleDark}
-              className={`flex items-center justify-center gap-2 rounded-lg h-8 text-[12px] font-medium app-sidebar-muted app-sidebar-icon ${
-                collapsed ? "w-9" : "flex-1"
-              }`}
-              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={() => navTo("/profile")}
+              title={user?.name || "Profile"}
+              className={`w-full flex items-center gap-2.5 rounded-lg text-left transition-colors ${
+                collapsed ? "justify-center h-10" : "px-1.5 py-1.5"
+              } ${location.pathname === "/profile" ? "bg-indigo-500/15" : "app-sidebar-link"}`}
             >
-              {isDark ? <icons.sun className="w-3.5 h-3.5 text-amber-400" /> : <icons.moon className="w-3.5 h-3.5" />}
-              {!collapsed && <span>{isDark ? "Light" : "Dark"}</span>}
+              <span className="w-8 h-8 rounded-full flex-shrink-0 app-sidebar-avatar flex items-center justify-center overflow-hidden">
+                <span className="font-semibold text-[13px]">
+                  {(user?.name || user?.username || "?").trim().charAt(0).toUpperCase() || "?"}
+                </span>
+              </span>
+              {!collapsed && (
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold leading-tight">{user?.name || "Add profile"}</span>
+                  <span className="block truncate text-[11px] leading-tight app-sidebar-muted">{user?.username || ""}</span>
+                </span>
+              )}
             </button>
-          </div>
+            <div className={`mt-1.5 flex gap-1 ${collapsed ? "flex-col items-center" : ""}`}>
+              <button
+                type="button"
+                onClick={toggleDark}
+                className={`flex items-center justify-center gap-2 rounded-lg h-8 text-[12px] font-medium app-sidebar-muted app-sidebar-icon transition-colors ${
+                  collapsed ? "w-9" : "flex-1"
+                }`}
+                title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {isDark ? <icons.sun className="w-3.5 h-3.5 text-amber-400" /> : <icons.moon className="w-3.5 h-3.5" />}
+                {!collapsed && <span>{isDark ? "Light" : "Dark"}</span>}
+              </button>
+            </div>
         </div>
       </aside>
       <main className="flex-1 min-h-0 min-w-0 overflow-auto p-6">
-        <Outlet />
+        {needsProfile && location.pathname !== "/profile" ? <Navigate to="/profile" replace /> : <Outlet />}
       </main>
     </div>
   );

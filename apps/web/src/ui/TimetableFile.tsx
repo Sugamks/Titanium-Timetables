@@ -1,90 +1,70 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { api } from "../api";
+import { IconButton } from "./icons";
+import { useToast } from "./Toast";
 import { currentYearId } from "../year";
 
 const TEMPLATE_KEY = "construct-template-id";
-const FILES_EVENT = "ttl-files";
 
-export function LibraryFiles() {
-  const [files, setFiles] = useState<{ name: string }[] | null>(null);
-
-  useEffect(() => {
-    const load = () => {
-      api<{ mode?: string; files?: { name: string }[] }>("/v1/document", {}, { busy: false })
-        .then((doc) => setFiles(doc.mode === "library" ? doc.files || [] : []))
-        .catch(() => setFiles([]));
-    };
-    load();
-    window.addEventListener(FILES_EVENT, load);
-    return () => window.removeEventListener(FILES_EVENT, load);
-  }, []);
-
-  if (!files?.length) return null;
-  return (
-    <div className="mr-auto min-w-0 text-xs text-slate-600">
-      <div className="font-medium text-slate-800">Files</div>
-      {files.map((file) => (
-        <div key={file.name} className="truncate" title={file.name}>{file.name}</div>
-      ))}
-    </div>
-  );
-}
-
-export default function SaveTimetable({ yearId, leading }: { yearId: string; leading?: ReactNode }) {
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState("");
+export default function SaveFileButton({ yearId, templateId }: { yearId: string; templateId?: string }) {
+  const toast = useToast();
+  const [path, setPath] = useState("");
+  const [showPath, setShowPath] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function save() {
-    setError("");
-    setSaved("");
     setBusy(true);
     try {
-      let templateId = "";
-      try {
-        templateId = sessionStorage.getItem(TEMPLATE_KEY) || "";
-      } catch {
-        templateId = "";
+      let picked = templateId || "";
+      if (!picked) {
+        try {
+          picked = sessionStorage.getItem(TEMPLATE_KEY) || "";
+        } catch {
+          picked = "";
+        }
       }
-      const r = await api<{ name?: string }>("/v1/document/pick", {
+      const r = await api<{ cancelled?: boolean; path?: string }>("/v1/document/pick", {
         method: "POST",
         body: JSON.stringify({
           kind: "save",
           academic_year_id: yearId || currentYearId(),
-          template_id: templateId || null,
+          template_id: picked || null,
         }),
       });
-      setSaved(r.name || "");
-      window.dispatchEvent(new Event(FILES_EVENT));
+      if (r.cancelled || !r.path) return;
+      setPath(r.path);
+      setShowPath(false);
+      toast("Saved");
     } catch (err: any) {
-      setError(err.message);
+      toast(err.message || "Save failed");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-      <div className="min-w-64 flex-1">
-        <h2 className="text-2xl font-semibold whitespace-nowrap">Timetable file</h2>
-        <p className="text-slate-500 text-sm mt-1 max-w-xl">
-          Writes template-year.ttl for the selected year.
+    <div className="relative flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+        disabled={busy}
+        title="Choose where to write year-template.ttl"
+        onClick={save}
+      >
+        {busy ? "Saving…" : "Save file"}
+      </button>
+      {path && (
+        <IconButton
+          icon="view"
+          label={showPath ? "Hide file location" : "Show file location"}
+          onClick={() => setShowPath((open) => !open)}
+        />
+      )}
+      {showPath && path && (
+        <p className="absolute right-0 top-full z-20 mt-1 w-64 break-all rounded-lg border bg-white px-2 py-1 text-xs text-slate-700 shadow">
+          {path}
         </p>
-        {leading}
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-1">
-        <button
-          type="button"
-          className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
-          disabled={busy}
-          title="Write this year's template to a .ttl file"
-          onClick={save}
-        >
-          {busy ? "Saving…" : "Save file"}
-        </button>
-        {saved && <p className="text-right text-xs text-slate-500">{saved}</p>}
-        {error && <p className="text-right text-sm text-red-600">{error}</p>}
-      </div>
-    </header>
+      )}
+    </div>
   );
 }

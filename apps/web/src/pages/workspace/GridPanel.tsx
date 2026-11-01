@@ -146,7 +146,7 @@ export default function GridPanel({
     onError("");
     try {
       await api(`/v1/publish/${vid}`, { method: "POST" });
-      onMessage("Published. Staff can now see this timetable under My timetable (and in ERP My Timetable).");
+      onMessage("Published. Staff can now see this timetable under My timetable.");
       await onChanged();
       await loadGrid(vid);
     } catch (e: any) {
@@ -191,7 +191,7 @@ export default function GridPanel({
       });
       setDragging(null);
       await loadGrid(versionId);
-      if (occupied) onMessage("Stacked in one period. Save as a group if these are language options.");
+      onMessage(occupied ? "Stacked in one period. Save as a group if these are language options." : "Saved");
     } catch (e: any) {
       onError(e.message);
     }

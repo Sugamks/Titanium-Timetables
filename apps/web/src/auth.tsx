@@ -18,10 +18,8 @@ export type AuthUser = {
   email?: string;
   username?: string;
   roles: string[];
-  erp_staff_id?: number | null;
   can_construct: boolean;
   institution?: string;
-  erp_database?: string;
 };
 
 export function profileFromMe(m: {
@@ -29,20 +27,16 @@ export function profileFromMe(m: {
   email?: string;
   username?: string;
   roles?: string[];
-  erp_staff_id?: number | null;
   can_construct?: boolean;
   institution?: string;
-  erp_database?: string;
 }, roles?: string[]): AuthUser {
   return {
     name: m.name,
     email: m.email,
     username: m.username,
     roles: m.roles || roles || [],
-    erp_staff_id: m.erp_staff_id,
     can_construct: !!m.can_construct,
     institution: m.institution,
-    erp_database: m.erp_database,
   };
 }
 

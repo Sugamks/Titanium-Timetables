@@ -142,6 +142,7 @@ export default function CatalogPanel({
       });
       setShortTouched(false);
       await onChanged();
+      toast("Saved");
     } catch (err: any) {
       setSubjectError(err.message);
     } finally {
@@ -258,6 +259,7 @@ export default function CatalogPanel({
                   await api(`/v1/subjects/${s.id}`, { method: "DELETE" });
                   if (openSubjectId === s.id) setOpenSubjectId("");
                   await onChanged();
+                  toast("Saved");
                 } catch (err: any) {
                   setSubjectError(err.message);
                 }
