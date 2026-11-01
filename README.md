@@ -2,7 +2,7 @@
 
 Standalone school timetable app. A FastAPI service stores each timetable in a `.ttl` file (SQLite). A React UI edits the timetable, generates a schedule, and handles day-to-day cover.
 
-Version `0.1.2`. <!-- x-release-please-version -->
+Version `0.1.3`. <!-- x-release-please-version -->
 
 ## What you can do
 
