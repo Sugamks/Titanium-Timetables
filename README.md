@@ -13,15 +13,25 @@ Version `0.1.2`. <!-- x-release-please-version -->
 - Record absences and assign substitutions.
 - The UI signs in as Staff and skips the login page.
 
-## Requirements
+## Install the Windows app
 
-- Windows
-- Python 3.11
-- Node.js `^20.19.0` or `>=22.12.0` (required by Vite 8)
+Use this if you want the installed app. Python and Node.js are not required.
 
-Redis is not required to start. PostgreSQL is not required. The default database is SQLite inside the `.ttl` file.
+1. Open the latest release: https://github.com/Sugamks/Titanium-Timetables/releases
+2. Download `TitaniumTimetables.msi`.
+3. Double-click that file.
 
-## Quick start
+The installer is per user. It does not ask for an administrator password. Files go to `%LocalAppData%\Programs\TitaniumTimetables`. The Start menu has **Titanium Timetables**. A second shortcut, **Timetable files**, opens that folder.
+
+Start the app from the Start menu. The first launch asks for a profile when the username is empty. After that, double-click a `.ttl` file to open that timetable.
+
+When a newer GitHub release exists, the app shows **Update available**. Update downloads the new MSI, checks the sha256, and installs it.
+
+Remove it from Windows Settings, under Apps, for the same Windows user.
+
+## Run from this repo
+
+Use this only to work on the source. You need Windows, Python 3.11, and Node.js `^20.19.0` or `>=22.12.0` (Vite 8). Redis is not required. PostgreSQL is not required. The database is the SQLite file inside the `.ttl`.
 
 From the repo root in PowerShell:
 
@@ -36,18 +46,6 @@ cd ..\..
 ```
 
 The app opens at `http://127.0.0.1:8765`. Close that console window to stop it.
-
-That path is for working in this repo. To install the Windows app, use the MSI below.
-
-## Windows app
-
-Download `TitaniumTimetables.msi` from the latest release:
-
-https://github.com/Sugamks/Titanium-Timetables/releases
-
-Double-click the MSI. It installs for the current Windows user and does not ask for an administrator password. The program files land in `%LocalAppData%\Programs\TitaniumTimetables`. The Start menu shortcut is **Titanium Timetables**.
-
-After install, double-click a `.ttl` file to open that timetable. When a newer release is on GitHub, the app shows **Update available**. Update downloads that MSI, checks its sha256, and installs it.
 
 Build steps for the `.exe` and the MSI are in [INSTALL.md](INSTALL.md).
 
