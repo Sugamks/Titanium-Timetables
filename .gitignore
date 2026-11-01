@@ -1,0 +1,24 @@
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+node_modules/
+apps/web/dist/
+
+# PyInstaller output from apps/desktop/build.ps1
+/dist/
+/build/
+
+.env
+.env.local
+!.env.example
+
+/data/
+apps/api/data/
+apps/api/tests/
+startup-error.txt
+
+.DS_Store
+Thumbs.db
