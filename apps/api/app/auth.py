@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException
 from jose import ExpiredSignatureError, JWTError, jwt
 from sqlalchemy.orm import Session
+import os
 
 from app.config import settings
 from app.database import get_db
