@@ -193,6 +193,7 @@ export default function SchoolLists({
       await api(path, { method: "POST", body: JSON.stringify(body) });
       clear();
       await onChanged();
+      toast("Saved");
       if (kind === "class") classInputRef.current?.focus();
     } catch (err: any) {
       setError(err.message);
@@ -293,6 +294,7 @@ export default function SchoolLists({
                   await api(`/v1/teachers/${t.id}`, { method: "DELETE" });
                   if (openTeacherId === t.id) setOpenTeacherId("");
                   await onChanged();
+                  toast("Saved");
                 } catch (err: any) {
                   setError(err.message);
                 }
@@ -431,6 +433,7 @@ export default function SchoolLists({
                 await api(`/v1/sections/${s.id}`, { method: "DELETE" });
                 if (openClassId === s.id) setOpenClassId("");
                 await onChanged();
+                toast("Saved");
               } catch (err: any) {
                 setError(err.message);
               }

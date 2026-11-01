@@ -8,10 +8,9 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth import get_current_user, require_roles
 from app.database import get_db
-from app.services.ttl_dialog import schedule_restart
+from app.services.ttl_dialog import pick_ttl, schedule_restart
 from app.services.ttl_file import (
     assert_document,
-    checkpoint_current,
     copy_document,
     current_path,
     keep_only_template,
@@ -48,7 +47,7 @@ def _dialog_allowed(request: Request) -> bool:
     return host in {"127.0.0.1", "::1"}
 
 
-def _save_dest(db: Session, template_id: str | None, year_id: str | None) -> tuple[Path, str]:
+def _save_dest(db: Session, template_id: str | None, year_id: str | None) -> tuple[Path | None, str]:
     if not year_id:
         raise HTTPException(400, "Select an academic year first.")
     year = db.get(models.AcademicYear, year_id)
@@ -66,11 +65,16 @@ def _save_dest(db: Session, template_id: str | None, year_id: str | None) -> tup
         if rows:
             raise HTTPException(400, "Select a template first.")
         raise HTTPException(400, "Create a template for this academic year first.")
-    folder = saved_folder()
     try:
-        return path_for_template(folder, chosen.name, year.name), chosen.id
+        suggested = path_for_template(saved_folder(), chosen.name, year.name).name
+        picked = pick_ttl("save", suggested)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if picked is None:
+        return None, chosen.id
+    if picked.suffix.lower() != ".ttl":
+        picked = picked.with_suffix(".ttl")
+    return picked, chosen.id
 
 
 @router.get("/document")
@@ -97,13 +101,13 @@ def document_pick(
     if not _dialog_allowed(request):
         raise HTTPException(400, "Save runs in the desktop app")
     dest, template_id = _save_dest(db, body.template_id, body.academic_year_id)
+    if dest is None:
+        return {"ok": False, "cancelled": True}
     src = _open_path()
     try:
         if dest.resolve() == src.resolve():
-            checkpoint_current()
-            saved = dest
-        else:
-            saved = copy_document(src, dest)
+            raise ValueError("Choose a different file. This timetable is already open.")
+        saved = copy_document(src, dest)
         keep_only_template(saved, template_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

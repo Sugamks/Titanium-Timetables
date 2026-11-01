@@ -9,6 +9,7 @@ const TEMPLATE_KEY = "construct-template-id";
 import ConstraintGrid, { type PaintMode } from "./constraints/TimeOffGrid";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
+import { useToast } from "../ui/Toast";
 type Tab = "global" | "staff" | "class";
 
 const PAINTED_TYPES = new Set([
@@ -65,6 +66,7 @@ export default function ConstraintsPage() {
  const [resources, setResources] = useState<any>(null);
  const [yearId, setYearId] = useState(() => currentYearId());
  const [err, setErr] = useState("");
+ const toast = useToast();
  const [tab, setTab] = useState<Tab>("global");
  const [teacherId, setTeacherId] = useState("");
  const [sectionId, setSectionId] = useState("");
@@ -218,6 +220,7 @@ export default function ConstraintsPage() {
  method: "POST",
  body: JSON.stringify({ kind, id, day_id: dayId, period_id: periodId, mode }),
  });
+ toast("Saved");
  } catch (e: any) {
  setCells((c) => {
  const next = { ...c };
@@ -249,6 +252,7 @@ export default function ConstraintsPage() {
  const g = await api(`/v1/constraints/grid?kind=section&target_id=${encodeURIComponent(sectionId)}`);
  setCells(g.cells || {});
  }
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  } finally {
@@ -281,6 +285,7 @@ export default function ConstraintsPage() {
  }),
  });
  setItems((await api("/v1/constraints")) || []);
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  }
@@ -511,6 +516,7 @@ export default function ConstraintsPage() {
  onClick={async () => {
  await api(`/v1/constraints/${i.id}`, { method: "DELETE" });
  setItems((rows) => rows.filter((r) => r.id !== i.id));
+ toast("Saved");
  }}
  />
  </li>
@@ -612,6 +618,7 @@ export default function ConstraintsPage() {
  setCells(g.cells || {});
  }
  setItems((await api("/v1/constraints")) || []);
+ toast("Saved");
  } catch (e: any) {
  setErr(e.message);
  } finally {

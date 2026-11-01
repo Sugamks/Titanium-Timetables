@@ -4,6 +4,7 @@ import { withBusy } from "../ui/busy";
 import { isTeachingPeriod, periodTypeLabel } from "../periods";
 import { onYearChange, timetablesUrl } from "../year";
 import ErrorBanner from "../ui/ErrorBanner";
+import { useToast } from "../ui/Toast";
 import { chipStyle } from "../ui/colors";
 
 type View = "section" | "teacher";
@@ -18,6 +19,7 @@ export default function DesignerPage() {
  const [dragging, setDragging] = useState<any>(null);
  const [preview, setPreview] = useState<any>(null);
  const [msg, setMsg] = useState("");
+ const toast = useToast();
  const [slotHint, setSlotHint] = useState<any>(null);
 
  async function loadVersions() {
@@ -88,6 +90,7 @@ export default function DesignerPage() {
  setPreview(null);
  await loadGrid(versionId);
  });
+ toast("Saved");
  } catch (e: any) {
  setMsg(e.message);
  }
@@ -271,6 +274,7 @@ export default function DesignerPage() {
  onClick={async () => {
  await api(`/v1/designer/allocations/${dragging.allocation_id}/lock`, { method: "POST", body: JSON.stringify({ lock_level: dragging.lock_level === "lesson" ? "none" : "lesson" }) });
  loadGrid(versionId);
+ toast("Saved");
  }}
  >
  Toggle lesson lock

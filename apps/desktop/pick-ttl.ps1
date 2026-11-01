@@ -16,6 +16,7 @@ if ($Kind -eq "save") {
 $dlg.Filter = "Timetable (*.ttl)|*.ttl"
 $dlg.DefaultExt = "ttl"
 $dlg.AddExtension = $true
+$dlg.InitialDirectory = [Environment]::GetFolderPath("MyDocuments")
 if ($Kind -eq "save" -and $Name) {
   $dlg.FileName = $Name
 }

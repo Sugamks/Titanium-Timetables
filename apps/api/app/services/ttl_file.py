@@ -134,7 +134,7 @@ def file_stem(template_name: str) -> str:
 
 
 def path_for_template(folder: Path, template_name: str, academic_year: str) -> Path:
-    return Path(folder) / f"{file_stem(template_name)}-{file_stem(academic_year)}.ttl"
+    return Path(folder) / f"{file_stem(academic_year)}-{file_stem(template_name)}.ttl"
 
 
 def _ids(query) -> list[str]:
@@ -222,13 +222,6 @@ def keep_only_template(path: Path, template_id: str) -> None:
         engine.dispose()
 
 
-def _rows_except(session, model, keep: set[str]):
-    query = session.query(model)
-    if keep:
-        query = query.filter(model.id.notin_(list(keep)))
-    return query.all()
-
-
 def _drop_lessons(session, lesson_ids: list[str]) -> None:
     from app import models
 
@@ -249,96 +242,37 @@ def _isolate_template(session, template_id: str) -> None:
     if timetable is None:
         return
     grid_id = timetable.time_grid_id
-    year_id = timetable.academic_year_id
     lessons = session.query(models.Lesson).filter(models.Lesson.time_grid_id == grid_id).all() if grid_id else []
     lesson_ids = [lesson.id for lesson in lessons]
     stray = _ids(session.query(models.Lesson.id).filter(models.Lesson.id.notin_(lesson_ids or [""])))
     if not lesson_ids:
         stray = _ids(session.query(models.Lesson.id))
     _drop_lessons(session, stray)
-    section_ids = {lesson.section_id for lesson in lessons if lesson.section_id}
-    subject_ids = {lesson.subject_id for lesson in lessons if lesson.subject_id}
-    group_ids = {lesson.student_group_id for lesson in lessons if lesson.student_group_id}
-    if lesson_ids:
-        section_ids.update(
-            row.section_id
-            for row in session.query(models.LessonSection).filter(models.LessonSection.lesson_id.in_(lesson_ids))
+    # Teachers, subjects, and classes stay. Lessons, bell times, and constraints from other templates do not.
+    kept_groups = {lesson.student_group_id for lesson in lessons if lesson.student_group_id}
+    if grid_id:
+        other_groups = session.query(models.StudentGroup).filter(
+            models.StudentGroup.time_grid_id.isnot(None),
+            models.StudentGroup.time_grid_id != grid_id,
         )
-        group_ids.update(
-            row.student_group_id
-            for row in session.query(models.LessonGroup).filter(models.LessonGroup.lesson_id.in_(lesson_ids))
-        )
-    resource_ids = set()
-    if lesson_ids:
-        resource_ids.update(
-            row.resource_id
-            for row in session.query(models.LessonResource).filter(models.LessonResource.lesson_id.in_(lesson_ids))
-        )
-    for section in session.query(models.Section).filter(models.Section.id.in_(list(section_ids) or [""])).all() if section_ids else []:
-        if section.class_teacher_id:
-            teacher = session.get(models.Teacher, section.class_teacher_id)
-            if teacher is not None:
-                resource_ids.add(teacher.resource_id)
-        if section.assistant_class_teacher_id:
-            teacher = session.get(models.Teacher, section.assistant_class_teacher_id)
-            if teacher is not None:
-                resource_ids.add(teacher.resource_id)
-        if section.resource_id:
-            resource_ids.add(section.resource_id)
-        if section.home_room_id:
-            resource_ids.add(section.home_room_id)
-    for row in session.query(models.Teacher).filter(models.Teacher.resource_id.in_(list(resource_ids) or [""])).all() if resource_ids else []:
-        resource_ids.add(row.resource_id)
-    teacher_ids = {
-        row.id
-        for row in (
-            session.query(models.Teacher).filter(models.Teacher.resource_id.in_(list(resource_ids))).all()
-            if resource_ids
-            else []
-        )
-    }
-    for group in _rows_except(session, models.StudentGroup, group_ids):
-        session.delete(group)
-    session.flush()
-    for section in _rows_except(session, models.Section, section_ids):
-        section.class_teacher_id = None
-        section.assistant_class_teacher_id = None
-        session.delete(section)
-    session.flush()
-    for link in session.query(models.TeacherSubject).all():
-        if link.teacher_id not in teacher_ids or link.subject_id not in subject_ids:
-            session.delete(link)
-    for teacher in _rows_except(session, models.Teacher, teacher_ids):
-        session.query(models.Duty).filter_by(teacher_id=teacher.id).delete(synchronize_session=False)
-        session.delete(teacher)
-    for subject in _rows_except(session, models.Subject, subject_ids):
-        session.query(models.SubjectYear).filter_by(subject_id=subject.id).delete(synchronize_session=False)
-        session.delete(subject)
-    session.flush()
-    if year_id:
-        for year in session.query(models.AcademicYear).filter(models.AcademicYear.id != year_id).all():
-            session.query(models.Term).filter_by(academic_year_id=year.id).delete(synchronize_session=False)
-            session.query(models.SubjectYear).filter_by(academic_year_id=year.id).delete(synchronize_session=False)
-            session.delete(year)
-    used_resources = set(resource_ids)
-    for section in session.query(models.Section).all():
-        if section.resource_id:
-            used_resources.add(section.resource_id)
-    for teacher in session.query(models.Teacher).all():
-        used_resources.add(teacher.resource_id)
-    for group in session.query(models.StudentGroup).all():
-        used_resources.add(group.resource_id)
-    for room in session.query(models.Room).all():
-        if room.resource_id not in used_resources:
-            session.delete(room)
+        if kept_groups:
+            other_groups = other_groups.filter(models.StudentGroup.id.notin_(list(kept_groups)))
+        other_groups.delete(synchronize_session=False)
+        for other_id in _ids(session.query(models.TimeGrid.id).filter(models.TimeGrid.id != grid_id)):
+            if session.query(models.Timetable).filter_by(time_grid_id=other_id).first():
+                continue
+            if session.query(models.StudentGroup).filter_by(time_grid_id=other_id).first():
+                continue
+            _drop_grid(session, other_id)
+        day_ids = _ids(session.query(models.Day.id).filter(models.Day.time_grid_id == grid_id))
+        if day_ids:
+            session.query(models.AvailabilityCell).filter(models.AvailabilityCell.day_id.notin_(day_ids)).delete(synchronize_session=False)
         else:
-            used_resources.add(room.resource_id)
-    session.flush()
-    for resource in session.query(models.Resource).all():
-        if resource.id not in used_resources:
-            session.query(models.AvailabilityCell).filter_by(resource_id=resource.id).delete(synchronize_session=False)
-            session.query(models.LessonResource).filter_by(resource_id=resource.id).delete(synchronize_session=False)
-            session.delete(resource)
+            session.query(models.AvailabilityCell).delete(synchronize_session=False)
+    session.query(models.ConstraintInstance).filter(
+        models.ConstraintInstance.timetable_id.isnot(None),
+        models.ConstraintInstance.timetable_id != template_id,
+    ).delete(synchronize_session=False)
     session.flush()
 
 

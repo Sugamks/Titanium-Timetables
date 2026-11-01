@@ -19,7 +19,7 @@ export const PAGE_HELP: Record<
 > = {
   workspace: {
     title: "Construct timetable",
-    intro: "Add the academic year on Templates first. A year can hold several templates. Save writes template-year.ttl. Double-click that file to open it.",
+    intro: "Add the academic year on Templates first. A year can hold several templates. Save writes year-template.ttl. Double-click that file to open it.",
     sections: [
       {
         heading: "What you can do",
@@ -28,7 +28,7 @@ export const PAGE_HELP: Record<
           "The sidebar list switches the current year. Add a year on Templates.",
           "Add teachers on Teachers. Add the class and section on Class section. Add subjects on Subjects.",
           "Generate several solutions, preview them, then Use to keep one.",
-          "Save writes template-year.ttl. Double-click that file to open it.",
+          "Save writes year-template.ttl. Double-click that file to open it.",
         ],
       },
       {
@@ -57,7 +57,7 @@ export const PAGE_HELP: Record<
           "Hard / Clear: leftover clashes or missing cards. 0 hard means every card is placed with no double-booking.",
           "Use saves that solution. You cannot swap periods on a preview — Use first.",
           "Stack language options in one cell, Save group, then Generate the remaining subjects. Grouped periods stay locked.",
-          "Save writes template-year.ttl. Double-click that file to open it.",
+          "Save writes year-template.ttl. Double-click that file to open it.",
         ],
       },
     ],

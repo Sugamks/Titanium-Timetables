@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { useToast } from "../ui/Toast";
 
 function SearchSelect({
   label,
@@ -74,9 +75,8 @@ export default function SchedulingPage() {
     duration_periods: 1,
   });
   const [err, setErr] = useState("");
-  const [syncMsg, setSyncMsg] = useState("");
+  const toast = useToast();
   const [saving, setSaving] = useState(false);
-  const [importingSubjects, setImportingSubjects] = useState(false);
 
   async function load() {
     const [c, l, w] = await Promise.all([api("/v1/catalog"), api("/v1/lessons"), api("/v1/workload")]);
@@ -156,6 +156,7 @@ export default function SchedulingPage() {
         }),
       });
       await load();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -164,62 +165,14 @@ export default function SchedulingPage() {
   }
 
   async function removeLesson(id: string) {
-    if (!window.confirm("Remove this lesson from the scheduling database? This does not change ERP.")) return;
+    if (!window.confirm("Remove this lesson from the scheduling database?")) return;
     setErr("");
     try {
       await api(`/v1/lessons/${id}`, { method: "DELETE" });
       await load();
+      toast("Saved");
     } catch (e: any) {
       setErr(e.message);
-    }
-  }
-
-  async function syncErp() {
-    setErr("");
-    setSyncMsg("Syncing from ERP MySQL…");
-    try {
-      const r = await api("/v1/sync/erp/pull", { method: "POST" });
-      if (!r.ok) {
-        setSyncMsg("");
-        setErr(r.error || "ERP sync failed");
-        return;
-      }
-      const t = r.totals || {};
-      const f = r.fetched || {};
-      setSyncMsg(
-        `Pulled from ${r.source}: ${f.teachers ?? 0} staff, ${f.sections ?? 0} sections, ${f.subjects ?? 0} subjects. ` +
-          `Saved totals: ${t.teachers ?? 0} teachers, ${t.sections ?? 0} sections, ${t.subjects ?? 0} subjects ` +
-          `(${r.created?.teachers ?? 0} new teachers).`
-      );
-      await load();
-    } catch (e: any) {
-      setSyncMsg("");
-      setErr(e.message);
-    }
-  }
-
-  async function importSubjects() {
-    setErr("");
-    setSyncMsg("Importing subjects from ERP…");
-    setImportingSubjects(true);
-    try {
-      const r = await api("/v1/sync/erp/subjects", { method: "POST" });
-      if (!r.ok) {
-        setSyncMsg("");
-        setErr(r.error || "Subject import failed");
-        return;
-      }
-      setSyncMsg(
-        `Imported subjects from ${r.source}.${r.source_table}: fetched ${r.fetched ?? 0}, ` +
-          `${r.created ?? 0} new, ${r.updated ?? 0} updated, total ${r.total ?? 0}` +
-          (r.year_links != null ? `, ${r.year_links} year links.` : ".")
-      );
-      await load();
-    } catch (e: any) {
-      setSyncMsg("");
-      setErr(e.message);
-    } finally {
-      setImportingSubjects(false);
     }
   }
 
@@ -245,21 +198,8 @@ export default function SchedulingPage() {
             Filter by academic year so classes and subjects stay separate. Lessons stay in the scheduling database.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 items-center justify-end">
-          <button
-            className="text-sm bg-indigo-600 text-white rounded px-3 py-1 disabled:opacity-50"
-            onClick={importSubjects}
-            disabled={importingSubjects}
-          >
-            {importingSubjects ? "Importing…" : "Import subjects from ERP"}
-          </button>
-          <button className="text-sm border rounded px-3 py-1" onClick={syncErp}>
-            Sync ERP master data
-          </button>
-        </div>
       </header>
       {err && <p className="text-red-600 text-sm">{err}</p>}
-      {syncMsg && <p className="text-emerald-700 text-sm">{syncMsg}</p>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
