@@ -1,18 +1,35 @@
-name: MSI
+name: Release
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: master
+
   package:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -65,8 +82,25 @@ jobs:
           path: dist/TitaniumTimetables.msi
           if-no-files-found: error
 
-      - name: Attach MSI to the GitHub release
-        if: github.event_name == 'release'
+      - name: Add MSI to the GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/TitaniumTimetables.msi --clobber
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $match = Select-String -Path apps\api\app\version.py -Pattern 'APP_VERSION = "([^"]+)"' | Select-Object -First 1
+          if (-not $match) { throw "APP_VERSION was not found" }
+          $version = $match.Matches[0].Groups[1].Value
+          $tag = $env:RELEASE_TAG
+          if (-not $tag) { $tag = "v$version" }
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag dist/TitaniumTimetables.msi --target $env:RELEASE_SHA --title $version --notes-file CHANGELOG.md
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          } else {
+            gh release upload $tag dist/TitaniumTimetables.msi --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+          }
