@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Per-user install so the exe folder stays writable. Saved .ttl files go in that same folder. -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package
       Name="Titanium Timetables"
       Manufacturer="NextElement"
@@ -11,6 +11,14 @@
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Titanium Timetables is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <util:CloseApplication
+        Id="CloseTitaniumTimetables"
+        Target="TitaniumTimetables.exe"
+        CloseMessage="yes"
+        EndSessionMessage="yes"
+        RebootPrompt="no"
+        TerminateProcess="yes"
+        Timeout="5" />
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Name="Programs">
