@@ -2,7 +2,7 @@
 
 Standalone school timetable app. A FastAPI service stores each timetable in a `.ttl` file (SQLite). A React UI edits the timetable, generates a schedule, and handles day-to-day cover.
 
-Version `0.1.0`.
+Version `0.1.2`. <!-- x-release-please-version -->
 
 ## What you can do
 
@@ -37,7 +37,19 @@ cd ..\..
 
 The app opens at `http://127.0.0.1:8765`. Close that console window to stop it.
 
-Full steps, environment variables, the dev servers, tests, and the Windows `.exe` build are in [INSTALL.md](INSTALL.md).
+That path is for working in this repo. To install the Windows app, use the MSI below.
+
+## Windows app
+
+Download `TitaniumTimetables.msi` from the latest release:
+
+https://github.com/Sugamks/Titanium-Timetables/releases
+
+Double-click the MSI. It installs for the current Windows user and does not ask for an administrator password. The program files land in `%LocalAppData%\Programs\TitaniumTimetables`. The Start menu shortcut is **Titanium Timetables**.
+
+After install, double-click a `.ttl` file to open that timetable. When a newer release is on GitHub, the app shows **Update available**. Update downloads that MSI, checks its sha256, and installs it.
+
+Build steps for the `.exe` and the MSI are in [INSTALL.md](INSTALL.md).
 
 ## Layout
 
