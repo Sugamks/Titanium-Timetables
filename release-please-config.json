@@ -4,6 +4,8 @@
     ".": {
       "release-type": "simple",
       "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "extra-files": ["apps/api/app/version.py"]

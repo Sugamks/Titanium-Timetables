@@ -147,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File apps\desktop\build.ps1
 powershell -ExecutionPolicy Bypass -File apps\desktop\package-windows.ps1
 ```
 
-`package-windows.ps1` writes `dist\TitaniumTimetables.msi`. It calls `build.ps1` unless you pass `-SkipBuild`. The MSI does not ship a `.env`. GitHub Actions workflow `.github/workflows/msi.yml` runs the same script and uploads the MSI as an artifact.
+`package-windows.ps1` writes `dist\TitaniumTimetables.msi`. It calls `build.ps1` unless you pass `-SkipBuild`. The MSI does not ship a `.env`. GitHub Actions workflow `.github/workflows/release.yml` publishes the GitHub release, builds this MSI, and attaches `TitaniumTimetables.msi` to that release.
 
 Run `dist\TitaniumTimetables\TitaniumTimetables.exe`. Data for a frozen build lives in a `data` folder beside the exe, unless `SCHEDULING_DATA_DIR` is set.
 
