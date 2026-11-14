@@ -62,59 +62,17 @@ export function periodTypeKey(ptype?: string) {
   return ptype || "teaching";
 }
 
+function tone(fill: string, bar: string) {
+  return { strip: fill, title: "text-ink", time: "text-muted", fill, bar };
+}
+
 export function periodTypeTone(kind: string) {
-  if (kind === "lunch_break") {
-    return {
-      strip: "period-fill-lunch hover:brightness-110 border-orange-200 dark:border-orange-700",
-      title: "text-orange-950 dark:text-orange-100",
-      time: "text-orange-800 dark:text-orange-200",
-      fill: "period-fill-lunch",
-      bar: "period-bar-lunch",
-    };
-  }
-  if (kind === "prayer_break") {
-    return {
-      strip: "bg-violet-100 hover:bg-violet-200 border-violet-200 dark:bg-violet-950/60 dark:hover:bg-violet-900/70 dark:border-violet-800",
-      title: "text-violet-950 dark:text-violet-100",
-      time: "text-violet-800 dark:text-violet-200",
-      fill: "bg-violet-100 dark:bg-violet-950/45",
-      bar: "bg-violet-400",
-    };
-  }
-  if (kind === "short_break") {
-    return {
-      strip: "period-fill-short hover:brightness-110 border-amber-200 dark:border-amber-600",
-      title: "text-amber-950 dark:text-amber-100",
-      time: "text-amber-800 dark:text-amber-200",
-      fill: "period-fill-short",
-      bar: "period-bar-short",
-    };
-  }
-  if (kind === "all_teachers") {
-    return {
-      strip: "bg-rose-100 hover:bg-rose-200 border-rose-200 dark:bg-rose-950/60 dark:hover:bg-rose-900/70 dark:border-rose-800",
-      title: "text-rose-950 dark:text-rose-100",
-      time: "text-rose-800 dark:text-rose-200",
-      fill: "bg-rose-100 dark:bg-rose-950/45",
-      bar: "bg-rose-400",
-    };
-  }
-  if (kind === "assembly") {
-    return {
-      strip: "bg-teal-100 hover:bg-teal-200 border-teal-200 dark:bg-teal-950/60 dark:hover:bg-teal-900/70 dark:border-teal-800",
-      title: "text-teal-950 dark:text-teal-100",
-      time: "text-teal-800 dark:text-teal-200",
-      fill: "bg-teal-100 dark:bg-teal-950/45",
-      bar: "bg-teal-400",
-    };
-  }
-  return {
-    strip: "bg-indigo-50 hover:bg-indigo-100 border-indigo-100 dark:bg-indigo-950/45 dark:hover:bg-indigo-900/55 dark:border-indigo-800",
-    title: "text-indigo-950 dark:text-indigo-100",
-    time: "text-indigo-700 dark:text-indigo-300",
-    fill: "bg-white dark:bg-transparent",
-    bar: "bg-indigo-500 dark:bg-indigo-400",
-  };
+  if (kind === "lunch_break") return tone("period-fill-lunch", "period-bar-lunch");
+  if (kind === "prayer_break") return tone("period-fill-prayer", "period-bar-prayer");
+  if (kind === "short_break") return tone("period-fill-short", "period-bar-short");
+  if (kind === "all_teachers") return tone("period-fill-all", "period-bar-all");
+  if (kind === "assembly") return tone("period-fill-assembly", "period-bar-assembly");
+  return tone("period-fill-teaching", "period-bar-teaching");
 }
 
 export function periodTypeLabel(ptype?: string) {

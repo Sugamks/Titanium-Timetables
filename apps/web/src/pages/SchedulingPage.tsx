@@ -155,8 +155,9 @@ export default function SchedulingPage() {
           week_pattern_id: catalog.week_patterns.find((p: any) => p.code === "ALL")?.id,
         }),
       });
+      const subjectName = yearSubjects.find((s: any) => s.id === form.subject_id)?.name || "the lesson";
       await load();
-      toast("Saved");
+      toast(`Added ${subjectName} to scheduling.`);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -170,7 +171,7 @@ export default function SchedulingPage() {
     try {
       await api(`/v1/lessons/${id}`, { method: "DELETE" });
       await load();
-      toast("Saved");
+      toast("Removed that lesson from scheduling.");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -178,7 +179,9 @@ export default function SchedulingPage() {
 
   const subjectOpts = yearSubjects.map((s: any) => ({ value: s.id, label: s.name }));
   const sectionOpts = yearSections.map((s: any) => ({ value: s.id, label: s.name }));
-  const teacherOpts = (catalog?.teachers || []).map((s: any) => ({ value: s.resource_id, label: s.name }));
+  const teacherOpts = (catalog?.teachers || [])
+    .filter((s: any) => s.is_active !== false)
+    .map((s: any) => ({ value: s.resource_id, label: s.name }));
   const yearName = years.find((y: any) => y.id === yearId)?.name || "";
   const yearsForFilter = years.filter(
     (y: any) =>
@@ -194,12 +197,12 @@ export default function SchedulingPage() {
       <header className="flex justify-between items-start">
         <div>
           <h1 className="text-2xl font-semibold">Scheduling</h1>
-          <p className="text-slate-500 text-sm">
+          <p className="text-muted text-sm">
             Filter by academic year so classes and subjects stay separate. Lessons stay in the scheduling database.
           </p>
         </div>
       </header>
-      {err && <p className="text-red-600 text-sm">{err}</p>}
+      {err && <p className="text-error text-sm">{err}</p>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
@@ -207,14 +210,14 @@ export default function SchedulingPage() {
           ["Subjects", yearSubjects.length],
           ["Teachers", catalog?.teachers?.length],
         ].map(([label, n]) => (
-          <div key={String(label)} className="bg-white border rounded-lg p-3">
-            <div className="text-xs text-slate-500">{label}</div>
+          <div key={String(label)} className="bg-paper-3 border rounded-lg p-3">
+            <div className="text-xs text-muted">{label}</div>
             <div className="text-2xl font-semibold">{n ?? 0}</div>
           </div>
         ))}
       </div>
 
-      <form onSubmit={createLesson} className="bg-white border rounded-lg p-4 grid md:grid-cols-6 gap-3 items-end">
+      <form onSubmit={createLesson} className="bg-paper-3 border rounded-lg p-4 grid md:grid-cols-6 gap-3 items-end">
         <SearchSelect
           label="Subject"
           value={form.subject_id}
@@ -256,16 +259,16 @@ export default function SchedulingPage() {
             onChange={(e) => setForm({ ...form, duration_periods: Number(e.target.value) })}
           />
         </label>
-        <button disabled={saving} className="bg-indigo-600 text-white rounded px-3 py-2 text-sm disabled:opacity-50">
+        <button disabled={saving} className="bg-accent text-accent-ink rounded px-3 py-2 text-sm disabled:opacity-55">
           {saving ? "Saving…" : "Add lesson"}
         </button>
       </form>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <section className="bg-white border rounded-lg overflow-hidden">
+        <section className="bg-paper-3 border rounded-lg overflow-hidden">
           <h2 className="px-4 py-3 font-medium border-b">Lessons{yearName ? ` · ${yearName}` : ""}</h2>
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left">
+            <thead className="bg-paper-2 text-left">
               <tr>
                 <th className="p-2">Subject</th>
                 <th className="p-2">Section</th>
@@ -277,7 +280,7 @@ export default function SchedulingPage() {
             <tbody>
               {yearLessons.length === 0 ? (
                 <tr>
-                  <td className="p-3 text-slate-500" colSpan={5}>No lessons for this academic year. Add one above.</td>
+                  <td className="p-3 text-muted" colSpan={5}>No lessons for this academic year. Add one above.</td>
                 </tr>
               ) : (
                 yearLessons.map((l) => (
@@ -287,7 +290,7 @@ export default function SchedulingPage() {
                     <td className="p-2">{l.teachers?.join(", ")}</td>
                     <td className="p-2">{l.frequency_per_week}×{l.duration_periods}</td>
                     <td className="p-2 text-right">
-                      <button className="text-red-600 text-xs" onClick={() => removeLesson(l.id)}>Remove</button>
+                      <button className="text-error text-xs" onClick={() => removeLesson(l.id)}>Remove</button>
                     </td>
                   </tr>
                 ))
@@ -295,10 +298,10 @@ export default function SchedulingPage() {
             </tbody>
           </table>
         </section>
-        <section className="bg-white border rounded-lg overflow-hidden">
+        <section className="bg-paper-3 border rounded-lg overflow-hidden">
           <h2 className="px-4 py-3 font-medium border-b">Teacher workload{yearName ? ` · ${yearName}` : ""}</h2>
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left">
+            <thead className="bg-paper-2 text-left">
               <tr>
                 <th className="p-2">Teacher</th>
                 <th className="p-2">Teaching</th>
@@ -309,7 +312,7 @@ export default function SchedulingPage() {
             <tbody>
               {yearWorkload.length === 0 ? (
                 <tr>
-                  <td className="p-3 text-slate-500" colSpan={4}>Workload appears after you add lessons for this year.</td>
+                  <td className="p-3 text-muted" colSpan={4}>Workload appears after you add lessons for this year.</td>
                 </tr>
               ) : (
                 yearWorkload.map((w) => (

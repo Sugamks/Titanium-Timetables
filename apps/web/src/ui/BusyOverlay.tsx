@@ -9,12 +9,12 @@ export default function BusyOverlay() {
  if (!state.visible) return null;
 
  return (
- <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/45" role="status" aria-live="polite" aria-busy="true">
- <div className="flex items-center gap-3 rounded-xl bg-white px-5 py-4 shadow-xl border border-slate-200">
- <span className="h-6 w-6 shrink-0 rounded-full border-2 border-indigo-200 border-t-indigo-600 animate-spin" />
+ <div className="fixed inset-0 z-[100] flex items-center justify-center scrim" role="status" aria-live="polite" aria-busy="true">
+ <div className="pop-in flex items-center gap-3 rounded-xl bg-paper-3 px-5 py-4 border border-rule">
+ <span className="h-6 w-6 shrink-0 rounded-full border-2 border-accent border-t-accent animate-spin" />
  <div>
- <p className="text-sm font-medium text-slate-900">{state.label}</p>
- <p className="text-xs text-slate-500">Please wait…</p>
+ <p className="text-sm font-medium text-ink">{state.label}</p>
+ <p className="text-xs text-muted">Please wait…</p>
  </div>
  </div>
  </div>

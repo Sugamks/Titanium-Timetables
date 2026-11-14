@@ -89,6 +89,76 @@ def _matches_mode(row: models.ConstraintInstance, mode: str) -> bool:
     return True
 
 
+def _paint_slot_rule(db: Session, type_code: str, scope: str, scope_id: str, day_id: str, period_id: str, mode: str) -> str:
+    mode = (mode or "unavailable").lower()
+    if mode in ("open", "available", "can", "clear"):
+        mode = "available"
+    if mode not in ("available", "unavailable"):
+        raise ValueError("Use available or unavailable")
+    row = (
+        db.query(models.ConstraintInstance)
+        .filter_by(type_code=type_code, scope=scope, scope_id=scope_id)
+        .first()
+    )
+    cell = (day_id, period_id)
+    if row:
+        slots = {tuple(pair) for pair in expand_slots(row.params, [], [])}
+    else:
+        slots = set()
+    if mode == "available":
+        slots.discard(cell)
+        if row and not slots:
+            db.delete(row)
+        elif row:
+            _write_slots(row, slots)
+        return "available"
+    slots.add(cell)
+    params = {"slots": [{"day_id": d, "period_id": p} for d, p in sorted(slots)], "day_ids": [], "period_ids": []}
+    params = get_handler(type_code).validate_params(params)
+    if row:
+        row.params = params
+        row.enabled = True
+    else:
+        db.add(
+            models.ConstraintInstance(
+                type_code=type_code,
+                severity="hard",
+                weight=100,
+                scope=scope,
+                scope_id=scope_id,
+                params=params,
+                enabled=True,
+            )
+        )
+    return "unavailable"
+
+
+def paint_subject(db: Session, subject_id: str, day_id: str, period_id: str, mode: str) -> str:
+    if not db.get(models.Subject, subject_id):
+        raise ValueError("Subject not found")
+    return _paint_slot_rule(db, "SubjectUnavailable", "subject", subject_id, day_id, period_id, mode)
+
+
+def paint_room(db: Session, resource_id: str, day_id: str, period_id: str, mode: str) -> str:
+    room = db.query(models.Room).filter_by(resource_id=resource_id).first()
+    if not room:
+        raise ValueError("Room not found")
+    return _paint_slot_rule(db, "RoomUnavailable", "room", resource_id, day_id, period_id, mode)
+
+
+def slot_rule_grid(db: Session, type_code: str, scope: str, scope_id: str) -> dict:
+    row = (
+        db.query(models.ConstraintInstance)
+        .filter_by(type_code=type_code, scope=scope, scope_id=scope_id)
+        .first()
+    )
+    cells = {}
+    if row:
+        for d, p in expand_slots(row.params, [], []):
+            cells[_key(d, p)] = "unavailable"
+    return {"kind": scope, "id": scope_id, "cells": cells}
+
+
 def teacher_grid(db: Session, resource_id: str) -> dict:
     rows = db.query(models.AvailabilityCell).filter_by(resource_id=resource_id).all()
     cells = {_key(r.day_id, r.period_id): r.state for r in rows}

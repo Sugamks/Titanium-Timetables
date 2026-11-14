@@ -272,11 +272,11 @@ export const icons = {
 export type ActionIcon = keyof typeof icons;
 
 const variants = {
- ghost: "text-slate-500 hover:bg-slate-100 hover:text-slate-800",
- danger: "text-red-600 hover:bg-red-50",
- bordered: "border border-slate-200 text-slate-600 hover:bg-slate-50",
- primary: "bg-indigo-600 text-white hover:bg-indigo-700",
- dangerSolid: "bg-red-500 text-white hover:bg-red-600",
+ ghost: "text-muted hover:bg-paper-2 hover:text-ink",
+ danger: "text-error hover:bg-error-well",
+ bordered: "border border-rule text-muted hover:bg-paper-2",
+ primary: "bg-accent text-accent-ink hover:bg-accent",
+ dangerSolid: "bg-error text-accent-ink hover:bg-error",
 };
 
 type IconButtonProps = {
@@ -300,7 +300,7 @@ export function IconButton({
  ...props
 }: IconButtonProps) {
  const Icon = icons[icon];
- const cls = `inline-flex items-center justify-center w-8 h-8 rounded-lg ${variants[variant]} disabled:opacity-40 ${className}`;
+ const cls = `icon-hit inline-flex items-center justify-center w-8 h-8 rounded-lg ${variants[variant]} disabled:opacity-55 ${className}`;
  if (href) {
  return (
  <a href={href} target={target} rel={rel} aria-label={label} title={label} className={cls}>

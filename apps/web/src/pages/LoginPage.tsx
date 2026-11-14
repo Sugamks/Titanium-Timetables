@@ -57,11 +57,11 @@ export default function LoginPage() {
   return (
     <>
     <UpdateOffer />
-    <div className="min-h-full grid place-items-center bg-slate-100">
-      <div className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-md">
+    <div className="min-h-full grid place-items-center bg-paper-2">
+      <div className="bg-paper-3 rounded-xl border p-8 w-full max-w-md">
         <h1 className="text-2xl font-semibold">Scheduling Platform</h1>
-        {institution && <p className="text-sm font-medium text-slate-800 mt-1">{institution}</p>}
-        <p className="text-slate-500 mt-1 text-sm">Sign in with your username and password.</p>
+        {institution && <p className="text-sm font-medium text-ink mt-1">{institution}</p>}
+        <p className="text-muted mt-1 text-sm">Sign in with your username and password.</p>
         <form onSubmit={signIn} className="mt-6 space-y-3">
           <label className="block text-sm">
             Username
@@ -84,7 +84,7 @@ export default function LoginPage() {
               required
             />
           </label>
-          <button disabled={busy} className="w-full bg-slate-900 text-white rounded-md py-2 disabled:opacity-50">
+          <button disabled={busy} className="w-full bg-ink text-accent-ink rounded-md py-2 disabled:opacity-55">
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
@@ -92,7 +92,7 @@ export default function LoginPage() {
           <button
             type="button"
             disabled={busy}
-            className="mt-3 w-full border rounded-md py-2 text-sm text-slate-600"
+            className="mt-3 w-full border rounded-md py-2 text-sm text-muted"
             onClick={async () => {
               setErr("");
               setBusy(true);

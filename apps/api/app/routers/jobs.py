@@ -19,6 +19,7 @@ class GenerateIn(BaseModel):
     version_id: str
     mode: str = "balanced"
     objectives: list[str] | None = None
+    section_ids: list[str] | None = None
 
 
 class ApplyIn(BaseModel):
@@ -56,13 +57,20 @@ def _require_live_version(db: Session, version_id: str) -> models.TimetableVersi
         raise HTTPException(404, "Version not found")
     if v.timetable and v.timetable.deleted_at:
         raise HTTPException(400, "This template was deleted. Restore it first.")
+    if (v.status or "") in ("published", "archived"):
+        raise HTTPException(400, "This week is published. Open a draft to change it.")
     return v
 
 
 @router.post("/generate")
 def generate(body: GenerateIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
     _require_live_version(db, body.version_id)
-    job = enqueue_job(db, "generate", body.version_id, {"mode": body.mode, "objectives": body.objectives})
+    job = enqueue_job(
+        db,
+        "generate",
+        body.version_id,
+        {"mode": body.mode, "objectives": body.objectives, "section_ids": body.section_ids or []},
+    )
     return _start(job)
 
 

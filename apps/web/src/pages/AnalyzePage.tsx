@@ -6,7 +6,7 @@ function Bar({ label, value }: { label: string; value: number }) {
  return (
  <div>
  <div className="flex justify-between text-sm"><span>{label}</span><span>{value}%</span></div>
- <div className="h-2 bg-slate-100 rounded"><div className="h-2 bg-indigo-500 rounded" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
+ <div className="h-2 bg-paper-2 rounded"><div className="h-2 bg-accent rounded" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
  </div>
  );
 }
@@ -44,24 +44,24 @@ export default function AnalyzePage() {
  <PageHelp page="analyze" />
  </div>
  </div>
- <div className="bg-white border rounded-lg p-4 space-y-3">
+ <div className="bg-paper-3 border rounded-lg p-4 space-y-3">
  <Bar label="Hard constraints" value={m.hard_constraints || 0} />
  <Bar label="Teacher gaps" value={m.teacher_gaps || 0} />
  <Bar label="Preference score" value={m.preference_score || 0} />
  <Bar label="Overall" value={m.overall || 0} />
- <p className="text-sm text-slate-500">{q?.hard_ok ? "Ready o publish" : "Hard validation failed — publish is blocked"}</p>
+ <p className="text-sm text-muted">{q?.hard_ok ? "Ready o publish" : "Hard validation failed — publish is blocked"}</p>
  </div>
- <section className="bg-white border rounded-lg p-4">
+ <section className="bg-paper-3 border rounded-lg p-4">
  <h2 className="font-medium mb-2">Teacher gaps</h2>
  {(q?.teacher_gap_details || []).map((g: any, i: number) => (
  <div key={i} className="text-sm">{g.teacher}: {g.gaps}</div>
  ))}
  </section>
- <section className="bg-white border rounded-lg p-4">
+ <section className="bg-paper-3 border rounded-lg p-4">
  <h2 className="font-medium mb-2">Substitution load</h2>
  {load.map((r) => <div key={r.teacher_id} className="text-sm">{r.name}: {r.covers}</div>)}
  </section>
- <section className="bg-white border rounded-lg p-4 space-y-2">
+ <section className="bg-paper-3 border rounded-lg p-4 space-y-2">
  <h2 className="font-medium">Change impact</h2>
  <select className="border rounded px-2 py-1 text-sm" onChange={async (e) => {
  const r = await api("/v1/impact", { method: "POST", body: JSON.stringify({ version_id: versionId, teacher_resource_id: e.target.value }) });
@@ -70,7 +70,7 @@ export default function AnalyzePage() {
  <option value="">Teacher unavailable…</option>
  {catalog?.teachers?.map((t: any) => <option key={t.resource_id} value={t.resource_id}>{t.name}</option>)}
  </select>
- {impact && <pre className="text-xs bg-slate-50 p-2 overflow-auto">{JSON.stringify(impact, null, 2)}</pre>}
+ {impact && <pre className="text-xs bg-paper-2 p-2 overflow-auto">{JSON.stringify(impact, null, 2)}</pre>}
  </section>
  </div>
  );

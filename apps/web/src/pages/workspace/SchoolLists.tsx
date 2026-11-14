@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api } from "../../api";
 import { useToast } from "../../ui/Toast";
+import NeedTemplate, { yearHasTemplate } from "../../ui/NeedTemplate";
 import { Field, inputClass } from "../../ui/SearchSelect";
 import { DataList, DataPill, DataRow } from "../../ui/DataRow";
 import ErrorBanner from "../../ui/ErrorBanner";
@@ -15,19 +16,20 @@ function TeacherEditor({
   teacher: any;
   teachers: any[];
   saving: boolean;
-  onSave: (body: { name: string; short_name: string; department: string }) => Promise<void>;
+  onSave: (body: { name: string; short_name: string; department: string; is_active: boolean }) => Promise<void>;
 }) {
   const [name, setName] = useState(teacher.name || "");
   const [short, setShort] = useState(teacher.short_name || "");
   const [shortTouched, setShortTouched] = useState(Boolean(teacher.short_name));
   const [department, setDepartment] = useState(teacher.department || "");
+  const [active, setActive] = useState(teacher.is_active !== false);
 
   return (
     <form
-      className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto] gap-2 items-end"
+      className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_8rem_auto] gap-2 items-end"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ name, short_name: short, department });
+        onSave({ name, short_name: short, department, is_active: active });
       }}
     >
       <Field label="Teacher">
@@ -56,7 +58,13 @@ function TeacherEditor({
       <Field label="Department">
         <input className={`${inputClass} h-10`} value={department} onChange={(e) => setDepartment(e.target.value.toUpperCase())} />
       </Field>
-      <button disabled={saving} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+      <Field label="Status">
+        <select className={`${inputClass} h-10`} value={active ? "active" : "inactive"} onChange={(e) => setActive(e.target.value === "active")}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </Field>
+      <button disabled={saving} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
         Save
       </button>
     </form>
@@ -74,13 +82,14 @@ function ClassEditor({
   teachers: any[];
   sections: any[];
   saving: boolean;
-  onSave: (body: { class_name: string; section_name: string; short_name: string; class_teacher_id: string | null }) => Promise<void>;
+  onSave: (body: { class_name: string; section_name: string; short_name: string; class_teacher_id: string | null; is_active: boolean }) => Promise<void>;
 }) {
   const [className, setClassName] = useState(section.class_name || "");
   const [sectionName, setSectionName] = useState(section.section_name || "");
   const [short, setShort] = useState(section.short_name || "");
   const [shortTouched, setShortTouched] = useState(Boolean(section.short_name));
   const [classTeacherId, setClassTeacherId] = useState(section.class_teacher_id || "");
+  const [active, setActive] = useState(section.is_active !== false);
 
   function fillShort(nextClass: string, nextSection: string) {
     if (shortTouched) return;
@@ -97,6 +106,7 @@ function ClassEditor({
           section_name: sectionName,
           short_name: short,
           class_teacher_id: classTeacherId || null,
+          is_active: active,
         });
       }}
     >
@@ -138,13 +148,19 @@ function ClassEditor({
         <Field label="Class teacher">
           <select className={`${inputClass} h-10`} value={classTeacherId} onChange={(e) => setClassTeacherId(e.target.value)}>
             <option value="">None</option>
-            {teachers.map((t: any) => (
+            {teachers.filter((t: any) => t.is_active !== false || t.id === classTeacherId).map((t: any) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         </Field>
       </div>
-      <button disabled={saving} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+      <Field label="Status">
+        <select className={`${inputClass} h-10`} value={active ? "active" : "inactive"} onChange={(e) => setActive(e.target.value === "active")}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </Field>
+      <button disabled={saving} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
         Save
       </button>
     </form>
@@ -167,6 +183,7 @@ export default function SchoolLists({
   const [teacherShort, setTeacherShort] = useState("");
   const [teacherShortTouched, setTeacherShortTouched] = useState(false);
   const [department, setDepartment] = useState("");
+  const [teacherActive, setTeacherActive] = useState(true);
   const [className, setClassName] = useState("");
   const [sectionName, setSectionName] = useState("");
   const [classShort, setClassShort] = useState("");
@@ -186,14 +203,14 @@ export default function SchoolLists({
     setClassShort(shortFromClassSection(nextClass, nextSection, sections.map((s: any) => s.short_name)));
   }
 
-  async function submit(kind: string, path: string, body: unknown, clear: () => void) {
+  async function submit(kind: string, path: string, body: unknown, clear: () => void, message: string) {
     setError("");
     setSaving(kind);
     try {
       await api(path, { method: "POST", body: JSON.stringify(body) });
       clear();
       await onChanged();
-      toast("Saved");
+      toast(message);
       if (kind === "class") classInputRef.current?.focus();
     } catch (err: any) {
       setError(err.message);
@@ -204,21 +221,22 @@ export default function SchoolLists({
 
   if (part === "teachers") {
     return (
-      <section className="bg-white border rounded-xl p-4 shadow-sm">
+      <section className="bg-paper-3 border rounded-xl p-4">
         <h2 className="font-semibold">Teachers</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-3">Teachers are stored in the open timetable file.</p>
+        <p className="text-xs text-muted mt-1 mb-3">Teachers are stored in the open timetable file.</p>
         <ErrorBanner className="mb-3" message={error} onClear={() => setError("")} />
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            submit("teacher", "/v1/teachers", { name: teacherName, department, short_name: teacherShort }, () => {
+            submit("teacher", "/v1/teachers", { name: teacherName, department, short_name: teacherShort, is_active: teacherActive }, () => {
               setTeacherName("");
               setTeacherShort("");
               setTeacherShortTouched(false);
               setDepartment("");
-            });
+              setTeacherActive(true);
+            }, `Added teacher “${teacherName.trim()}”.`);
           }}
-          className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto] gap-2 items-end"
+          className="grid grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_8rem_auto] gap-2 items-end"
         >
           <div className="min-w-0">
             <Field label="Teacher">
@@ -254,7 +272,15 @@ export default function SchoolLists({
               <input className={`${inputClass} h-10`} value={department} placeholder="Optional" onChange={(e) => setDepartment(e.target.value.toUpperCase())} />
             </Field>
           </div>
-          <button disabled={saving === "teacher"} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+          <div className="min-w-0">
+            <Field label="Status">
+              <select className={`${inputClass} h-10`} value={teacherActive ? "active" : "inactive"} onChange={(e) => setTeacherActive(e.target.value === "active")}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </Field>
+          </div>
+          <button disabled={saving === "teacher"} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
             Add teacher
           </button>
         </form>
@@ -265,7 +291,12 @@ export default function SchoolLists({
               name={t.name}
               short={t.short_name}
               deleteLabel="Delete teacher"
-              badge={t.department ? <DataPill>{t.department}</DataPill> : null}
+              badge={
+                <>
+                  {t.department ? <DataPill>{t.department}</DataPill> : null}
+                  {t.is_active === false ? <DataPill>Inactive</DataPill> : null}
+                </>
+              }
               open={openTeacherId === t.id}
               onToggle={() => setOpenTeacherId((id) => (id === t.id ? "" : t.id))}
               editor={
@@ -279,7 +310,7 @@ export default function SchoolLists({
                     try {
                       await api(`/v1/teachers/${t.id}`, { method: "PATCH", body: JSON.stringify(body) });
                       await onChanged();
-                      toast("Saved");
+                      toast(`Saved teacher “${body.name || t.name}”.`);
                     } catch (err: any) {
                       setError(err.message);
                     } finally {
@@ -294,7 +325,7 @@ export default function SchoolLists({
                   await api(`/v1/teachers/${t.id}`, { method: "DELETE" });
                   if (openTeacherId === t.id) setOpenTeacherId("");
                   await onChanged();
-                  toast("Saved");
+                  toast(`Removed teacher “${t.name}”.`);
                 } catch (err: any) {
                   setError(err.message);
                 }
@@ -306,10 +337,12 @@ export default function SchoolLists({
     );
   }
 
+  if (!yearHasTemplate(catalog?.timetables, yearId)) return <NeedTemplate what="Classes" />;
+
   return (
-    <section className="bg-white border rounded-xl p-4 shadow-sm">
+    <section className="bg-paper-3 border rounded-xl p-4">
       <h2 className="font-semibold">Class section</h2>
-      <p className="text-xs text-slate-500 mt-1 mb-3">
+      <p className="text-xs text-muted mt-1 mb-3">
         Classes use the academic year selected in the sidebar. Add a year from the box at the top of this page.
       </p>
       <ErrorBanner className="mb-3" message={error} onClear={() => setError("")} />
@@ -332,7 +365,8 @@ export default function SchoolLists({
               setClassShort("");
               setClassShortTouched(false);
               setClassTeacherId("");
-            }
+            },
+            `Added class “${[className.trim(), sectionName.trim()].filter(Boolean).join(" ")}”.`
           );
         }}
         className="grid grid-cols-[minmax(0,1fr)_6rem_7rem_minmax(0,1fr)_auto] gap-2 items-end"
@@ -385,16 +419,16 @@ export default function SchoolLists({
           <Field label="Class teacher">
             <select className={`${inputClass} h-10`} value={classTeacherId} onChange={(e) => setClassTeacherId(e.target.value)}>
               <option value="">None</option>
-              {teachers.map((t: any) => (
+              {teachers.filter((t: any) => t.is_active !== false).map((t: any) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
           </Field>
         </div>
-        <button disabled={saving === "class" || !yearId} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+        <button disabled={saving === "class" || !yearId} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
           Add class
         </button>
-        {!yearId && <p className="text-xs text-slate-500">Add an academic year first.</p>}
+        {!yearId && <p className="text-xs text-muted">Add an academic year first.</p>}
       </form>
       <DataList>
         {sections.map((s: any) => (
@@ -402,7 +436,12 @@ export default function SchoolLists({
             key={s.id}
             name={s.name}
             short={s.short_name}
-            badge={s.class_teacher_name ? <DataPill>{s.class_teacher_name}</DataPill> : null}
+            badge={
+              <>
+                {s.class_teacher_name ? <DataPill>{s.class_teacher_name}</DataPill> : null}
+                {s.is_active === false ? <DataPill>Inactive</DataPill> : null}
+              </>
+            }
             open={openClassId === s.id}
             onToggle={() => setOpenClassId((id) => (id === s.id ? "" : s.id))}
             editor={
@@ -417,7 +456,7 @@ export default function SchoolLists({
                   try {
                     await api(`/v1/sections/${s.id}`, { method: "PATCH", body: JSON.stringify(body) });
                     await onChanged();
-                    toast("Saved");
+                    toast(`Saved class “${[body.class_name, body.section_name].filter(Boolean).join(" ") || s.name}”.`);
                   } catch (err: any) {
                     setError(err.message);
                   } finally {
@@ -433,7 +472,7 @@ export default function SchoolLists({
                 await api(`/v1/sections/${s.id}`, { method: "DELETE" });
                 if (openClassId === s.id) setOpenClassId("");
                 await onChanged();
-                toast("Saved");
+                toast(`Removed class “${s.name}”.`);
               } catch (err: any) {
                 setError(err.message);
               }

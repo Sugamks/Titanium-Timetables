@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite+pysqlite:///{(_API_DIR / 'data' / 'scheduling.db').as_posix()}"
     redis_url: str = "redis://localhost:6379/0"
-    jwt_secret: str = ""
+    jwt_secret: str = "aksdhga3682gdcksdgf97w43rsjkdhcsdclseyr"
     jwt_expire_minutes: int = 480
     scheduling_service_key: str = "dev-scheduling-service-key"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1:8765,http://localhost:8765"

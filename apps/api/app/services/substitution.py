@@ -207,8 +207,37 @@ def ensure_day(db: Session, on_date: date, version: models.TimetableVersion) -> 
     return day
 
 
+def weight_config(db: Session) -> models.SubstitutionWeight:
+    row = db.query(models.SubstitutionWeight).first()
+    if row:
+        return row
+    row = models.SubstitutionWeight()
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _cover_row(day, absence, alloc, teacher_id: str, cover_type: str) -> models.SubstitutionCover:
+    return models.SubstitutionCover(
+        substitution_day_id=day.id,
+        absence_id=absence.id,
+        allocation_id=alloc.id,
+        day_id=alloc.day_id,
+        period_id=alloc.period_id,
+        absent_teacher_id=teacher_id,
+        cover_teacher_ids=[],
+        status="pending",
+        cover_type=cover_type,
+    )
+
+
 def seed_covers_for_absence(db: Session, day: models.SubstitutionDay, version: models.TimetableVersion, absence: models.Absence) -> int:
-    teacher = absence.teacher or db.get(models.Teacher, absence.teacher_id)
+    kind = (absence.kind or "teacher").lower()
+    if kind == "room":
+        return _seed_room_absence(db, day, version, absence)
+    if kind == "section":
+        return _seed_class_absence(db, day, version, absence)
+    teacher = absence.teacher or (db.get(models.Teacher, absence.teacher_id) if absence.teacher_id else None)
     if not teacher:
         return 0
     grid_day = grid_day_for(db, version, day.on_date)
@@ -228,23 +257,66 @@ def seed_covers_for_absence(db: Session, day: models.SubstitutionDay, version: m
         key = (alloc.id, teacher.id)
         if key in existing:
             continue
-        db.add(
-            models.SubstitutionCover(
-                substitution_day_id=day.id,
-                absence_id=absence.id,
-                allocation_id=alloc.id,
-                day_id=alloc.day_id,
-                period_id=alloc.period_id,
-                absent_teacher_id=teacher.id,
-                cover_teacher_ids=[],
-                status="pending",
-            )
-        )
+        db.add(_cover_row(day, absence, alloc, teacher.id, "covered"))
         existing.add(key)
         added += 1
     if added:
         db.commit()
         db.refresh(day)
+    return added
+
+
+def _lesson_teacher_id(db: Session, lesson) -> str | None:
+    if not lesson:
+        return None
+    for res in lesson_teachers(lesson):
+        row = db.query(models.Teacher).filter_by(resource_id=res.id).first()
+        if row:
+            return row.id
+    return None
+
+
+def _seed_room_absence(db: Session, day, version, absence) -> int:
+    grid_day = grid_day_for(db, version, day.on_date)
+    if not grid_day or not absence.room_resource_id:
+        return 0
+    added = 0
+    existing = {c.allocation_id for c in day.covers}
+    for alloc in version.allocations:
+        if alloc.day_id != grid_day.id or alloc.room_resource_id != absence.room_resource_id:
+            continue
+        if alloc.id in existing:
+            continue
+        teacher_id = _lesson_teacher_id(db, alloc.lesson)
+        if not teacher_id:
+            continue
+        db.add(_cover_row(day, absence, alloc, teacher_id, "covered"))
+        added += 1
+    if added:
+        db.commit()
+    return added
+
+
+def _seed_class_absence(db: Session, day, version, absence) -> int:
+    from app.engine.occupancy import lesson_covers_section
+
+    grid_day = grid_day_for(db, version, day.on_date)
+    if not grid_day or not absence.section_id:
+        return 0
+    added = 0
+    existing = {c.allocation_id for c in day.covers}
+    for alloc in version.allocations:
+        if alloc.day_id != grid_day.id or not lesson_covers_section(alloc.lesson, absence.section_id):
+            continue
+        if alloc.id in existing:
+            continue
+        teacher_id = _lesson_teacher_id(db, alloc.lesson)
+        if not teacher_id:
+            continue
+        db.add(_cover_row(day, absence, alloc, teacher_id, "cancelled"))
+        added += 1
+    if added:
+        db.commit()
     return added
 
 
@@ -338,6 +410,7 @@ def score_candidates(
     day: models.SubstitutionDay | None = None,
     section_id: str | None = None,
 ) -> list[dict]:
+    weights = weight_config(db)
     when = on_date or (day.on_date if day else date.today())
     lesson = allocation.lesson
     subject_name = lesson.subject.name if lesson and lesson.subject else ""
@@ -376,9 +449,19 @@ def score_candidates(
         reasons = []
         score = 50
         blocked = False
-        free = t.id not in busy
-        if free:
-            score += 25
+        on_duty = (
+            db.query(models.Duty)
+            .filter_by(teacher_id=t.id, on_date=when, period_id=allocation.period_id)
+            .first()
+            is not None
+        )
+        free = t.id not in busy and not on_duty
+        if on_duty:
+            score -= 40
+            blocked = True
+            reasons.append({"ok": False, "text": "Duty this period"})
+        elif free:
+            score += weights.free
             reasons.append({"ok": True, "text": "Free this period"})
         else:
             score -= 40
@@ -395,6 +478,7 @@ def score_candidates(
                 blocked = True
             reasons.append({"ok": False, "text": f"Exemption ({ex.kind})"})
         else:
+            score += weights.not_exempt
             reasons.append({"ok": True, "text": "No exemption"})
         same_dept = bool(t.department and absent_teacher.department and t.department == absent_teacher.department)
         if same_dept:
@@ -403,12 +487,12 @@ def score_candidates(
         else:
             reasons.append({"ok": False, "text": "Different department"})
         if t.id in subject_teachers:
-            score += 15
+            score += weights.same_subject
             reasons.append({"ok": True, "text": "Same subject"})
         else:
             reasons.append({"ok": False, "text": "Different subject"})
         if t.id in class_teachers:
-            score += 8
+            score += weights.teaches_class
             reasons.append({"ok": True, "text": "Teaches this class"})
         load = loads.get(t.id, {"daily": 0, "weekly": 0, "monthly": 0})
         if load["daily"] >= DAILY_CAP:
@@ -416,6 +500,7 @@ def score_candidates(
             blocked = True
             reasons.append({"ok": False, "text": f"Daily cap {load['daily']}/{DAILY_CAP}"})
         else:
+            score += weights.under_cap
             reasons.append({"ok": True, "text": f"Daily {load['daily']}/{DAILY_CAP}"})
         if load["weekly"] >= WEEKLY_CAP:
             score -= 15
@@ -463,6 +548,10 @@ def serialize_cover(db: Session, cover: models.SubstitutionCover, teachers: dict
         "id": cover.id,
         "absence_id": cover.absence_id,
         "allocation_id": cover.allocation_id,
+        "cover_type": cover.cover_type or "covered",
+        "target_period_id": cover.target_period_id,
+        "joined_section_id": cover.joined_section_id,
+        "cover_room_resource_id": cover.cover_room_resource_id,
         "period_id": cover.period_id,
         "period": period.name if period else "",
         "start_time": period.start_time.strftime("%H:%M") if period and period.start_time else "",
@@ -501,10 +590,20 @@ def serialize_day(db: Session, day: models.SubstitutionDay) -> dict:
     by_teacher: dict[str, dict] = {}
     for ab in absences:
         start, end = absence_window(ab)
-        by_teacher[ab.teacher_id] = {
+        key = ab.id
+        label = teachers.get(ab.teacher_id) or ""
+        if (ab.kind or "teacher") == "room":
+            room = db.get(models.Resource, ab.room_resource_id) if ab.room_resource_id else None
+            label = f"Room {room.name}" if room else "Room"
+        elif (ab.kind or "") == "section":
+            section = db.get(models.Section, ab.section_id) if ab.section_id else None
+            label = f"Class {section.resource.name}" if section and section.resource else "Class"
+        by_teacher[key] = {
             "absence_id": ab.id,
             "teacher_id": ab.teacher_id,
-            "teacher": teachers.get(ab.teacher_id) or "",
+            "teacher": label,
+            "kind": ab.kind or "teacher",
+            "reason": ab.reason or "",
             "source": ab.source,
             "leave_for": ab.leave_for or "fullday",
             "time_in": start.strftime("%H:%M"),
@@ -516,7 +615,7 @@ def serialize_day(db: Session, day: models.SubstitutionDay) -> dict:
             "covers": [],
         }
     for cover in covers:
-        tid = cover["absent_teacher_id"]
+        tid = cover.get("absence_id") or cover["absent_teacher_id"]
         if tid not in by_teacher:
             by_teacher[tid] = {
                 "absence_id": cover.get("absence_id"),
@@ -586,6 +685,7 @@ def serialize_day(db: Session, day: models.SubstitutionDay) -> dict:
                         "cover_id": cover["id"] if cover else None,
                         "cover_teachers": cover.get("cover_teachers") if cover else [],
                         "cover_status": cover["status"] if cover else None,
+                        "cover_type": cover.get("cover_type") if cover else None,
                         "absent_teacher": cover.get("absent_teacher") if cover else None,
                     }
             day_grid = sorted(by_section.values(), key=lambda r: r["section"] or "")
@@ -609,3 +709,49 @@ def serialize_day(db: Session, day: models.SubstitutionDay) -> dict:
         "absentees": absentees,
         "covers": covers,
     }
+
+
+def month_totals(db: Session, year: int, month: int) -> list[dict]:
+    start = date(year, month, 1)
+    if month == 12:
+        end = date(year + 1, 1, 1)
+    else:
+        end = date(year, month + 1, 1)
+    teachers = {t.id: teacher_name(t) for t in db.query(models.Teacher).all()}
+    rows = {tid: {"teacher_id": tid, "teacher": name, "absences": 0, "covers_given": 0, "covers_received": 0} for tid, name in teachers.items()}
+    for ab in db.query(models.Absence).all():
+        if ab.teacher_id and start <= ab.on_date < end and ab.teacher_id in rows:
+            rows[ab.teacher_id]["absences"] += 1
+    days = [d for d in db.query(models.SubstitutionDay).all() if start <= d.on_date < end]
+    for day in days:
+        for cover in day.covers:
+            if cover.status == "ignored":
+                continue
+            if cover.absent_teacher_id in rows and cover.cover_type not in ("cancelled",):
+                rows[cover.absent_teacher_id]["covers_received"] += 1
+            for tid in cover_ids(cover):
+                if tid in rows:
+                    rows[tid]["covers_given"] += 1
+    return sorted(rows.values(), key=lambda r: (-r["absences"], -r["covers_given"], r["teacher"]))
+
+
+def free_rooms(db: Session, version: models.TimetableVersion, day_id: str, period_id: str) -> list[dict]:
+    busy = {
+        a.room_resource_id
+        for a in version.allocations
+        if a.day_id == day_id and a.period_id == period_id and a.room_resource_id
+    }
+    out = []
+    for room in db.query(models.Room).options(joinedload(models.Room.resource)).all():
+        out.append(
+            {
+                "id": room.resource_id,
+                "name": room.resource.name if room.resource else room.id,
+                "room_type": room.room_type,
+                "building": room.building,
+                "capacity": room.capacity,
+                "free": room.resource_id not in busy,
+            }
+        )
+    out.sort(key=lambda r: (not r["free"], r["name"]))
+    return out

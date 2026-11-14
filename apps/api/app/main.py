@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from app.database import Base, SessionLocal, engine, ensure_schema
 from app.routers import ai, analytics, designer, document, jobs, operations, publish, scheduling, updates
 from app.version import APP_VERSION
 from app.seed import ensure_all_groups, ensure_default_time_grid, ensure_lesson_sections, seed_catalog
-from app.services.audit import record_audit
+from app.services.audit import describe_mutation, record_audit, snapshot_for_audit
 from app.services.institution import institution_name
 from app.services.staff_profile import read_profile
 
@@ -29,18 +30,48 @@ app.add_middleware(
 _AUDIT_SKIP = (
     "/health",
     "/v1/app/update",
+    "/v1/preview",
+    "/v1/impact",
+    "/v1/generate",
+    "/v1/repair",
+    "/v1/jobs/",
+    "/v1/designer/allocations",
 )
+
+
+def _json_dict(raw: bytes | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 @app.middleware("http")
 async def audit_mutations(request: Request, call_next):
-    response = await call_next(request)
-    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
-        return response
     path = request.url.path
-    if not path.startswith("/v1/") or any(path.startswith(skip) for skip in _AUDIT_SKIP):
+    watch = request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/v1/")
+    if watch and any(path.startswith(skip) for skip in _AUDIT_SKIP):
+        watch = False
+    body: dict = {}
+    before = None
+    if watch and request.method in ("POST", "PUT", "PATCH"):
+        body = _json_dict(await request.body())
+    if watch:
+        db = SessionLocal()
+        try:
+            before = snapshot_for_audit(db, path)
+        except Exception:
+            before = None
+        finally:
+            db.close()
+    response = await call_next(request)
+    if not watch or response.status_code >= 400:
         return response
-    if response.status_code >= 400:
+    result = _json_dict(getattr(response, "body", None))
+    if result.get("cancelled"):
         return response
     user = None
     auth = request.headers.get("authorization") or ""
@@ -57,7 +88,8 @@ async def audit_mutations(request: Request, call_next):
     entity = parts[1] if len(parts) > 1 else "app"
     db = SessionLocal()
     try:
-        record_audit(db, user, entity=entity, reason=f"{request.method} {path}")
+        reason = describe_mutation(db, request.method, path, body, result, before)
+        record_audit(db, user, entity=entity, reason=reason)
         db.commit()
     except Exception:
         db.rollback()

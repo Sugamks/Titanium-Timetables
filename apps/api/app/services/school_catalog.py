@@ -121,7 +121,42 @@ def add_year(db: Session, name: str, is_current: bool = True, short_name: str | 
     return year
 
 
-def add_teacher(db: Session, name: str, department: str | None = None, short_name: str | None = None) -> models.Teacher:
+def teacher_is_assigned(db: Session, teacher: models.Teacher) -> bool:
+    if teacher.resource_id and db.query(models.LessonResource).filter_by(resource_id=teacher.resource_id).first():
+        return True
+    if (
+        db.query(models.Section)
+        .filter(
+            or_(
+                models.Section.class_teacher_id == teacher.id,
+                models.Section.assistant_class_teacher_id == teacher.id,
+            )
+        )
+        .first()
+    ):
+        return True
+    if db.query(models.Absence).filter_by(teacher_id=teacher.id).first():
+        return True
+    return (
+        db.query(models.SubstitutionCover)
+        .filter(
+            or_(
+                models.SubstitutionCover.absent_teacher_id == teacher.id,
+                models.SubstitutionCover.cover_teacher_id == teacher.id,
+            )
+        )
+        .first()
+        is not None
+    )
+
+
+def add_teacher(
+    db: Session,
+    name: str,
+    department: str | None = None,
+    short_name: str | None = None,
+    is_active: bool = True,
+) -> models.Teacher:
     name = _clean(name).upper()
     department = _clean(department).upper()
     if not name:
@@ -134,7 +169,7 @@ def add_teacher(db: Session, name: str, department: str | None = None, short_nam
     )
     if clash:
         raise ValueError("A teacher with this name already exists")
-    resource = models.Resource(type="teacher", name=name)
+    resource = models.Resource(type="teacher", name=name, is_active=bool(is_active))
     db.add(resource)
     db.flush()
     used = {(t.short_name or "").upper() for t in db.query(models.Teacher).all()}
@@ -169,6 +204,8 @@ def add_class(
         teacher = db.get(models.Teacher, class_teacher_id)
         if not teacher:
             raise ValueError("Class teacher not found")
+        if teacher.resource and teacher.resource.is_active is False:
+            raise ValueError("That teacher is inactive. Pick an active teacher.")
     clash = (
         db.query(models.Section)
         .filter(
@@ -199,18 +236,26 @@ def add_class(
     return section
 
 
+def class_is_used(db: Session, section: models.Section) -> bool:
+    if db.query(models.Lesson).filter_by(section_id=section.id).first():
+        return True
+    if db.query(models.LessonSection).filter_by(section_id=section.id).first():
+        return True
+    if db.query(models.StudentGroup).filter_by(section_id=section.id).first():
+        return True
+    if section.resource_id and db.query(models.LessonResource).filter_by(resource_id=section.resource_id).first():
+        return True
+    if db.query(models.Absence).filter_by(section_id=section.id).first():
+        return True
+    return db.query(models.SubstitutionCover).filter_by(joined_section_id=section.id).first() is not None
+
+
 def delete_class(db: Session, section_id: str) -> None:
     section = db.get(models.Section, section_id)
     if not section:
         raise ValueError("Class not found")
-    if db.query(models.Lesson).filter_by(section_id=section.id).first():
-        raise ValueError("This class is used by lessons. Remove those lessons first.")
-    if db.query(models.LessonSection).filter_by(section_id=section.id).first():
-        raise ValueError("This class is used by lessons. Remove those lessons first.")
-    if db.query(models.StudentGroup).filter_by(section_id=section.id).first():
-        raise ValueError("This class has student groups. Remove those first.")
-    if section.resource_id and db.query(models.LessonResource).filter_by(resource_id=section.resource_id).first():
-        raise ValueError("This class is used by lessons. Remove those lessons first.")
+    if class_is_used(db, section):
+        raise ValueError("This class is already used. Deactivate it instead of deleting it.")
     resource = db.get(models.Resource, section.resource_id) if section.resource_id else None
     if section.resource_id:
         db.query(models.AvailabilityCell).filter_by(resource_id=section.resource_id).delete()
@@ -224,20 +269,8 @@ def delete_teacher(db: Session, teacher_id: str) -> None:
     teacher = db.get(models.Teacher, teacher_id)
     if not teacher:
         raise ValueError("Teacher not found")
-    assigned = (
-        db.query(models.Section)
-        .filter(
-            or_(
-                models.Section.class_teacher_id == teacher.id,
-                models.Section.assistant_class_teacher_id == teacher.id,
-            )
-        )
-        .first()
-    )
-    if assigned:
-        raise ValueError("This teacher is assigned to a class. Clear that class first.")
-    if db.query(models.LessonResource).filter_by(resource_id=teacher.resource_id).first():
-        raise ValueError("This teacher is used by lessons. Remove those lessons first.")
+    if teacher_is_assigned(db, teacher):
+        raise ValueError("This teacher is already used. Deactivate them instead of deleting them.")
     resource = db.get(models.Resource, teacher.resource_id)
     db.delete(teacher)
     if resource:
@@ -307,6 +340,8 @@ def update_teacher(db: Session, teacher_id: str, fields: dict) -> models.Teacher
         teacher.department = department or None
     if "short_name" in fields:
         _save_short(teacher, db.query(models.Teacher).all(), fields["short_name"])
+    if "is_active" in fields:
+        teacher.resource.is_active = bool(fields["is_active"])
     db.commit()
     db.refresh(teacher)
     return teacher
@@ -346,11 +381,15 @@ def update_class(db: Session, section_id: str, fields: dict) -> models.Section:
             teacher = db.get(models.Teacher, teacher_id)
             if not teacher:
                 raise ValueError("Class teacher not found")
+            if teacher.resource and teacher.resource.is_active is False and section.class_teacher_id != teacher.id:
+                raise ValueError("That teacher is inactive. Pick an active teacher.")
             section.class_teacher_id = teacher.id
         else:
             section.class_teacher_id = None
     if "short_name" in fields:
         _save_short(section, db.query(models.Section).all(), fields["short_name"])
+    if "is_active" in fields and section.resource:
+        section.resource.is_active = bool(fields["is_active"])
     db.commit()
     db.refresh(section)
     return section

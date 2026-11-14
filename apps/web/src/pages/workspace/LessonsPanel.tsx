@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { api } from "../../api";
+import { withBusy } from "../../ui/busy";
+import SearchSelect, { Field, inputClass, MultiSearchSelect, type SelectOption } from "../../ui/SearchSelect";
+import { IconButton } from "../../ui/icons";
+import { isJoinedLesson, joinedShort } from "../../ui/lessonMarks";
+import NeedTemplate from "../../ui/NeedTemplate";
 
 type LessonDraft = {
   id: string;
@@ -8,6 +14,9 @@ type LessonDraft = {
   room_resource_id: string;
   frequency_per_week: number;
   duration_periods: number;
+  blocks: string;
+  week_pattern_id: string;
+  allowed_room_ids: string[];
 };
 
 function lessonDraft(l: any): LessonDraft {
@@ -19,22 +28,41 @@ function lessonDraft(l: any): LessonDraft {
     room_resource_id: l.room_resource_ids?.[0] || "",
     frequency_per_week: Number(l.frequency_per_week) || 1,
     duration_periods: Number(l.duration_periods) || 1,
+    blocks: Array.isArray(l.blocks) && l.blocks.length ? l.blocks.join(",") : "",
+    week_pattern_id: l.week_pattern_id || "",
+    allowed_room_ids: [...(l.allowed_room_ids || [])],
   };
+}
+
+function parseBlocks(text: string): number[] | null {
+  const parts = text.split(/[^0-9]+/).map((n) => Number(n)).filter((n) => n > 0);
+  return parts.length ? parts : null;
 }
 
 function sameDraft(a: LessonDraft, b: LessonDraft) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
-import { Link } from "react-router-dom";
-import { api } from "../../api";
-import { withBusy } from "../../ui/busy";
-import SearchSelect, { Field, inputClass, MultiSearchSelect, type SelectOption } from "../../ui/SearchSelect";
-import { IconButton } from "../../ui/icons";
-import { isJoinedLesson, joinedShort } from "../../ui/lessonMarks";
+
+/** Spread weekly cards across staff (e.g. 5 → 3+2). */
+function splitLoads(teacherIds: string[], total: number): Record<string, number> {
+  const n = teacherIds.length;
+  if (!n) return {};
+  const base = Math.floor(total / n);
+  const rem = total % n;
+  const out: Record<string, number> = {};
+  teacherIds.forEach((id, i) => {
+    out[id] = base + (i < rem ? 1 : 0);
+  });
+  return out;
+}
 
 export default function LessonsPanel({
   catalog,
   yearId,
+  templates,
+  templateId,
+  timeGridId,
+  onLessonUpdated,
   yearSections,
   yearSubjects,
   yearLessons,
@@ -45,6 +73,11 @@ export default function LessonsPanel({
 }: {
   catalog: any;
   yearId: string;
+  templates?: any[];
+  templateId?: string;
+  onTemplateChange?: (id: string) => void;
+  timeGridId?: string;
+  onLessonUpdated?: (lesson: any) => void;
   yearSections: any[];
   yearSubjects: any[];
   yearLessons: any[];
@@ -56,10 +89,15 @@ export default function LessonsPanel({
   const [form, setForm] = useState({
     subject_id: yearSubjects[0]?.id || "",
     section_ids: yearSections[0]?.id ? [yearSections[0].id] : [] as string[],
-    teacher_resource_ids: catalog?.teachers?.[0]?.resource_id ? [catalog.teachers[0].resource_id] : [] as string[],
+    teacher_resource_ids: (catalog?.teachers || []).find((t: any) => t.is_active !== false)?.resource_id
+      ? [(catalog?.teachers || []).find((t: any) => t.is_active !== false).resource_id]
+      : [] as string[],
     room_resource_id: "",
     frequency_per_week: 5,
     duration_periods: 1,
+    blocks: "",
+    week_pattern_id: "",
+    allowed_room_ids: [] as string[],
   });
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
@@ -73,13 +111,22 @@ export default function LessonsPanel({
   const [replacing, setReplacing] = useState(false);
   const [openId, setOpenId] = useState("");
   const [edit, setEdit] = useState<LessonDraft | null>(null);
+  const [splitStaff, setSplitStaff] = useState(false);
+  const [staffLoads, setStaffLoads] = useState<Record<string, number>>({});
+  const [editSplit, setEditSplit] = useState(false);
+  const [editLoads, setEditLoads] = useState<Record<string, number>>({});
 
-  const subjectOpts: SelectOption[] = yearSubjects.map((s: any) => ({
-    value: s.id,
-    label: s.name,
-    short: s.short_name || "",
-  }));
+  const subjectOpts: SelectOption[] = yearSubjects
+    .filter((s: any) => s.is_active !== false)
+    .map((s: any) => ({
+      value: s.id,
+      label: s.name,
+      short: s.short_name || "",
+    }));
   const sectionOpts: SelectOption[] = yearSections.map((s: any) => ({ value: s.id, label: s.name }));
+  const activeSectionOpts: SelectOption[] = yearSections
+    .filter((s: any) => s.is_active !== false)
+    .map((s: any) => ({ value: s.id, label: s.name }));
   const lessonSectionIds = useMemo(() => {
     const ids = new Set<string>();
     for (const l of yearLessons) {
@@ -90,7 +137,16 @@ export default function LessonsPanel({
   }, [yearLessons]);
   const cloneSourceOpts = sectionOpts.filter((o) => lessonSectionIds.has(o.value));
   const sourceId = lessonSectionIds.has(cloneFrom) ? cloneFrom : lessonSectionIds.has(classFilter) ? classFilter : "";
-  const teacherOpts: SelectOption[] = (catalog?.teachers || []).map((s: any) => ({ value: s.resource_id, label: s.name }));
+  const teacherOpts: SelectOption[] = (catalog?.teachers || [])
+    .filter((s: any) => s.is_active !== false)
+    .map((s: any) => ({ value: s.resource_id, label: s.name }));
+  function keepCurrent(options: SelectOption[], rows: any[], ids: string[], key: string): SelectOption[] {
+    const have = new Set(options.map((o) => o.value));
+    const extra = rows
+      .filter((row) => ids.includes(row[key]) && !have.has(row[key]))
+      .map((row) => ({ value: row[key], label: row.name, short: row.short_name || "" }));
+    return extra.length ? [...options, ...extra] : options;
+  }
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return yearLessons.filter((l) => {
@@ -122,14 +178,24 @@ export default function LessonsPanel({
   }
 
   function subjectColor(l: any) {
-    return /^#[0-9a-fA-F]{6}$/.test(l.color || "") ? l.color : "#64748b";
+    return /^#[0-9a-fA-F]{6}$/.test(l.color || "") ? l.color : "var(--color-muted)";
   }
 
   const yearTemplates = useMemo(
-    () => (catalog?.timetables || []).filter((t: any) => !yearId || t.academic_year_id === yearId),
-    [catalog, yearId]
+    () => templates ?? (catalog?.timetables || []).filter((t: any) => !yearId || t.academic_year_id === yearId),
+    [templates, catalog, yearId]
   );
   const hasTemplate = yearTemplates.length > 0;
+
+  function resolveGridId() {
+    const chosen = yearTemplates.find((t: any) => t.id === templateId);
+    const grid =
+      (timeGridId && { id: timeGridId }) ||
+      (chosen?.time_grid_id && { id: chosen.time_grid_id }) ||
+      catalog?.time_grids?.find((g: any) => yearTemplates.some((t: any) => t.time_grid_id === g.id)) ||
+      catalog?.time_grids?.find((g: any) => g.academic_year_id === yearId);
+    return grid?.id as string | undefined;
+  }
 
   async function addLesson(e: FormEvent) {
     e.preventDefault();
@@ -142,26 +208,61 @@ export default function LessonsPanel({
       onError("Choose a subject, at least one class, and at least one teacher.");
       return;
     }
+    const doSplit = splitStaff && form.teacher_resource_ids.length > 1;
+    const loads = form.teacher_resource_ids.map((id) => ({ id, n: Number(staffLoads[id]) || 0 }));
+    if (doSplit) {
+      const sum = loads.reduce((a, row) => a + row.n, 0);
+      if (sum !== form.frequency_per_week) {
+        onError(`Staff periods must add up to ${form.frequency_per_week} (now ${sum}).`);
+        return;
+      }
+      if (loads.some((row) => row.n < 1)) {
+        onError("Each staff share must be at least 1, or remove that teacher.");
+        return;
+      }
+    }
     setSaving(true);
     try {
-      const grid =
-        catalog?.time_grids?.find((g: any) => yearTemplates.some((t: any) => t.time_grid_id === g.id)) ||
-        catalog?.time_grids?.find((g: any) => g.academic_year_id === yearId);
-      await api("/v1/lessons", {
-        method: "POST",
-        body: JSON.stringify({
-          subject_id: form.subject_id,
-          section_ids: form.section_ids,
-          teacher_resource_ids: form.teacher_resource_ids,
-          room_resource_id: form.room_resource_id || null,
-          frequency_per_week: form.frequency_per_week,
-          duration_periods: form.duration_periods,
-          time_grid_id: grid?.id,
-          week_pattern_id: catalog?.week_patterns?.find((p: any) => p.code === "ALL")?.id,
-        }),
-      });
+      const gridId = resolveGridId();
+      const weekId = form.week_pattern_id || catalog?.week_patterns?.find((p: any) => p.code === "ALL")?.id;
+      const base = {
+        subject_id: form.subject_id,
+        section_ids: form.section_ids,
+        room_resource_id: form.room_resource_id || null,
+        duration_periods: form.duration_periods,
+        blocks: parseBlocks(form.blocks),
+        allowed_room_ids: form.allowed_room_ids,
+        time_grid_id: gridId,
+        week_pattern_id: weekId,
+      };
+      if (doSplit) {
+        for (const row of loads) {
+          await api("/v1/lessons", {
+            method: "POST",
+            body: JSON.stringify({
+              ...base,
+              teacher_resource_ids: [row.id],
+              frequency_per_week: row.n,
+            }),
+          });
+        }
+      } else {
+        await api("/v1/lessons", {
+          method: "POST",
+          body: JSON.stringify({
+            ...base,
+            teacher_resource_ids: form.teacher_resource_ids,
+            frequency_per_week: form.frequency_per_week,
+          }),
+        });
+      }
+      const subjectName = yearSubjects.find((s) => s.id === form.subject_id)?.name || "the lesson";
       await onChanged();
-      onMessage("Saved");
+      onMessage(
+        doSplit
+          ? `Added ${subjectName} split across ${loads.length} staff (${loads.map((r) => r.n).join(" + ")}).`
+          : `Added ${subjectName}, ${form.frequency_per_week} times a week.`
+      );
     } catch (e: any) {
       onError(e.message);
     } finally {
@@ -214,10 +315,62 @@ export default function LessonsPanel({
       onError("Choose a subject, at least one class, and at least one teacher.");
       return;
     }
+    const doSplit = editSplit && edit.teacher_resource_ids.length > 1;
+    const loads = edit.teacher_resource_ids.map((id) => ({ id, n: Number(editLoads[id]) || 0 }));
+    if (doSplit) {
+      const sum = loads.reduce((a, row) => a + row.n, 0);
+      if (sum !== edit.frequency_per_week) {
+        onError(`Staff periods must add up to ${edit.frequency_per_week} (now ${sum}).`);
+        return;
+      }
+      if (loads.some((row) => row.n < 1)) {
+        onError("Each staff share must be at least 1, or remove that teacher.");
+        return;
+      }
+    }
     setBusyId(edit.id);
     onError("");
     try {
-      await api(`/v1/lessons/${edit.id}`, {
+      if (doSplit) {
+        const gridId = resolveGridId();
+        const first = loads[0];
+        await api(`/v1/lessons/${edit.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            section_ids: edit.section_ids,
+            subject_id: edit.subject_id,
+            teacher_resource_ids: [first.id],
+            frequency_per_week: first.n,
+            duration_periods: edit.duration_periods,
+            blocks: parseBlocks(edit.blocks),
+            allowed_room_ids: edit.allowed_room_ids,
+            week_pattern_id: edit.week_pattern_id || null,
+          }),
+        });
+        for (const row of loads.slice(1)) {
+          await api("/v1/lessons", {
+            method: "POST",
+            body: JSON.stringify({
+              subject_id: edit.subject_id,
+              section_ids: edit.section_ids,
+              teacher_resource_ids: [row.id],
+              frequency_per_week: row.n,
+              duration_periods: edit.duration_periods,
+              blocks: parseBlocks(edit.blocks),
+              allowed_room_ids: edit.allowed_room_ids,
+              time_grid_id: gridId,
+              week_pattern_id: edit.week_pattern_id || catalog?.week_patterns?.find((p: any) => p.code === "ALL")?.id,
+            }),
+          });
+        }
+        await onChanged();
+        setOpenId("");
+        setEdit(null);
+        setEditSplit(false);
+        onMessage(`Split into ${loads.length} lessons (${loads.map((r) => r.n).join(" + ")}).`);
+        return;
+      }
+      const updated = await api(`/v1/lessons/${edit.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           section_ids: edit.section_ids,
@@ -226,14 +379,18 @@ export default function LessonsPanel({
           room_resource_id: edit.room_resource_id || null,
           frequency_per_week: edit.frequency_per_week,
           duration_periods: edit.duration_periods,
+          blocks: parseBlocks(edit.blocks),
+          allowed_room_ids: edit.allowed_room_ids,
+          week_pattern_id: edit.week_pattern_id || null,
         }),
       });
+      if (updated) onLessonUpdated?.(updated);
       await onChanged();
       const name = yearSubjects.find((s: any) => s.id === edit.subject_id)?.name || openLesson?.subject || "Lesson";
       const teachers = edit.teacher_resource_ids
         .map((id) => teacherOpts.find((o) => o.value === id)?.label)
         .filter(Boolean);
-      onMessage(`Saved ${name}${teachers.length ? ` · ${teachers.join(", ")}` : ""}.`);
+      onMessage(teachers.length ? `Saved ${name} with ${teachers.join(", ")}.` : `Saved ${name}.`);
       setEdit({ ...edit });
     } catch (e: any) {
       onError(e.message);
@@ -255,8 +412,11 @@ export default function LessonsPanel({
       await withBusy("Cloning lessons…", async () => {
         const r = await api("/v1/lessons/clone", { method: "POST", body: JSON.stringify({ ...body, target_section_ids: into }) });
         await onChanged();
-        const bits = [`Cloned ${r.created || 0} lesson${r.created === 1 ? "" : "s"}.`];
-        if (r.skipped_existing) bits.push(`${r.skipped_existing} already existed.`);
+        const bits: string[] = [];
+        if (r.created) bits.push(`Added ${r.created} lesson${r.created === 1 ? "" : "s"}.`);
+        if (r.updated) bits.push(`Updated staff on ${r.updated} existing lesson${r.updated === 1 ? "" : "s"}.`);
+        if (r.removed) bits.push(`Replaced ${r.removed} old lesson${r.removed === 1 ? "" : "s"}.`);
+        if (!bits.length) bits.push("Nothing to clone.");
         if (r.skipped_joined) bits.push(`${r.skipped_joined} shared (multi-class) cards were left as-is.`);
         onMessage(bits.join(" "));
       });
@@ -273,7 +433,7 @@ export default function LessonsPanel({
       onError("Choose a class to clone from.");
       return;
     }
-    await cloneLessons({ source_section_id: source });
+    await cloneLessons({ source_section_id: source, time_grid_id: resolveGridId() || undefined });
   }
 
   async function replaceStaff() {
@@ -334,10 +494,11 @@ export default function LessonsPanel({
     if (!window.confirm("Remove this lesson? Placed cards for it will also be removed.")) return;
     setBusyId(id);
     try {
+      const gone = yearLessons.find((l) => l.id === id);
       await api(`/v1/lessons/${id}`, { method: "DELETE" });
       if (openId === id) setOpenId("");
       await onChanged();
-      onMessage("Saved");
+      onMessage(`Removed ${gone?.subject || gone?.short || "that lesson"}.`);
     } catch (e: any) {
       onError(e.message);
     } finally {
@@ -345,31 +506,16 @@ export default function LessonsPanel({
     }
   }
 
-  if (!hasTemplate) {
-    return (
-      <div className="bg-white border border-slate-200 rounded-xl p-8 shadow-sm text-center">
-        <h2 className="font-semibold text-slate-900">Create a template first</h2>
-        <p className="text-sm text-slate-500 mt-2 max-w-lg mx-auto">
-          Lessons need a timetable template (bell times and periods) for this year. Add one under Templates, then come back here.
-        </p>
-        <Link
-          to="/timetable"
-          className="inline-block mt-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium"
-        >
-          Go to Templates
-        </Link>
-      </div>
-    );
-  }
+  if (!hasTemplate) return <NeedTemplate what="Lessons" />;
 
   return (
     <div className="space-y-4 pb-8">
-      <form onSubmit={addLesson} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <form onSubmit={addLesson} className="bg-paper-3 border border-rule rounded-xl p-4">
         <div className="flex flex-wrap justify-between gap-2 mb-3">
           <div>
-            <h2 className="font-semibold text-slate-900">Add lesson</h2>
-            <p className="text-xs text-slate-500">
-              One class is the usual case. Pick several classes only when whole classes share the same period.
+            <h2 className="font-semibold text-ink">Add lesson</h2>
+            <p className="text-xs text-muted">
+              One class is the usual case. Pick several classes only when whole classes share the same period. To split 5 periods as 3+2, pick two teachers and turn on Split load.
             </p>
           </div>
         </div>
@@ -379,7 +525,7 @@ export default function LessonsPanel({
               label="Classes"
               values={form.section_ids}
               onChange={(section_ids) => setForm({ ...form, section_ids })}
-              options={sectionOpts}
+              options={activeSectionOpts}
               placeholder="Select classes"
             />
           </div>
@@ -390,14 +536,35 @@ export default function LessonsPanel({
             <MultiSearchSelect
               label="Teachers"
               values={form.teacher_resource_ids}
-              onChange={(teacher_resource_ids) => setForm({ ...form, teacher_resource_ids })}
+              onChange={(teacher_resource_ids) => {
+                setForm({ ...form, teacher_resource_ids });
+                if (teacher_resource_ids.length > 1) {
+                  setSplitStaff(true);
+                  setStaffLoads(splitLoads(teacher_resource_ids, form.frequency_per_week));
+                } else {
+                  setSplitStaff(false);
+                  setStaffLoads({});
+                }
+              }}
               options={teacherOpts}
               placeholder="Select teachers"
             />
           </div>
           <div className="w-24 shrink-0">
             <Field label="Periods / week">
-              <input type="number" min={1} className={inputClass} value={form.frequency_per_week} onChange={(e) => setForm({ ...form, frequency_per_week: Number(e.target.value) })} />
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={form.frequency_per_week}
+                onChange={(e) => {
+                  const frequency_per_week = Number(e.target.value);
+                  setForm({ ...form, frequency_per_week });
+                  if (splitStaff && form.teacher_resource_ids.length > 1) {
+                    setStaffLoads(splitLoads(form.teacher_resource_ids, frequency_per_week));
+                  }
+                }}
+              />
             </Field>
           </div>
           <div className="w-20 shrink-0">
@@ -405,22 +572,76 @@ export default function LessonsPanel({
               <input type="number" min={1} className={inputClass} value={form.duration_periods} onChange={(e) => setForm({ ...form, duration_periods: Number(e.target.value) })} />
             </Field>
           </div>
+          <div className="w-36 shrink-0">
+            <Field label="Blocks">
+              <input className={inputClass} placeholder="2,1,1,1" value={form.blocks} onChange={(e) => setForm({ ...form, blocks: e.target.value })} />
+            </Field>
+          </div>
+          <div className="w-36 shrink-0">
+            <SearchSelect
+              label="Week"
+              value={form.week_pattern_id}
+              onChange={(week_pattern_id) => setForm({ ...form, week_pattern_id })}
+              options={(catalog?.week_patterns || []).map((p: any) => ({
+                value: p.id,
+                label: p.code === "WEEK_A" ? "Odd week" : p.code === "WEEK_B" ? "Even week" : p.name || "Every week",
+              }))}
+              placeholder="Every week"
+            />
+          </div>
           <div className="shrink-0">
             <Field label={"\u00a0"}>
-              <button disabled={saving} className="h-[42px] px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+              <button disabled={saving} className="h-[42px] px-4 bg-accent hover:bg-accent text-accent-ink rounded-lg text-sm font-medium disabled:opacity-55">
                 {saving ? "Adding…" : "Add lesson"}
               </button>
             </Field>
           </div>
         </div>
+        {form.teacher_resource_ids.length > 1 && (
+          <div className="mt-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={splitStaff}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setSplitStaff(on);
+                  if (on) setStaffLoads(splitLoads(form.teacher_resource_ids, form.frequency_per_week));
+                }}
+              />
+              Split load — each teacher gets their own cards (e.g. 3 + 2). Off means they co-teach every card.
+            </label>
+            {splitStaff && (
+              <div className="flex flex-wrap gap-3">
+                {form.teacher_resource_ids.map((id) => {
+                  const name = teacherOpts.find((t) => t.value === id)?.label || id;
+                  return (
+                    <Field key={id} label={name}>
+                      <input
+                        type="number"
+                        min={1}
+                        className={`${inputClass} w-20`}
+                        value={staffLoads[id] ?? 0}
+                        onChange={(e) => setStaffLoads({ ...staffLoads, [id]: Number(e.target.value) || 0 })}
+                      />
+                    </Field>
+                  );
+                })}
+                <p className="text-xs text-muted self-end pb-2">
+                  Sum {Object.values(staffLoads).reduce((a, n) => a + (Number(n) || 0), 0)} / {form.frequency_per_week}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </form>
 
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 space-y-3">
+      <section className="bg-paper-3 border border-rule rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-rule space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="font-semibold text-slate-900">Lesson cards</h2>
+            <h2 className="font-semibold text-ink">Lesson cards</h2>
             <div className="flex items-center gap-2">
-              <input className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-36" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <input className="border border-rule rounded-lg px-2 py-1.5 text-sm w-36" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
               <div className="w-44">
                 <SearchSelect
                   value={classFilter}
@@ -451,7 +672,7 @@ export default function LessonsPanel({
                 label="Into"
                 values={cloneTo.filter((id) => id !== sourceId)}
                 onChange={(ids) => setCloneTo(ids.filter((id) => id !== sourceId))}
-                options={sectionOpts.filter((o) => o.value !== sourceId)}
+                options={activeSectionOpts.filter((o) => o.value !== sourceId)}
                 placeholder="Target classes"
               />
             </div>
@@ -485,18 +706,18 @@ export default function LessonsPanel({
               type="button"
               disabled={replacing}
               onClick={replaceStaff}
-              className="h-[38px] px-3 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+              className="h-[38px] px-3 text-sm rounded-lg border border-rule hover:bg-paper-2 disabled:opacity-55"
             >
               {replacing ? "Replacing…" : "Replace"}
             </button>
           </div>
         </div>
         {classRows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">No lessons yet. Add one above, then open Timetable to generate.</div>
+          <div className="p-8 text-center text-sm text-muted">No lessons yet. Add one above, then open Timetable to generate.</div>
         ) : (
           <div className="max-h-[min(36rem,65vh)] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500 sticky top-0 z-10">
+              <thead className="bg-paper-2 text-left text-muted sticky top-0 z-10">
                 <tr>
                   <th className="p-3 font-medium w-10">#</th>
                   <th className="p-3 font-medium w-44">Class</th>
@@ -509,40 +730,72 @@ export default function LessonsPanel({
                   const total = row.lessons.reduce((n, l) => n + lessonLoad(l), 0);
                   const rowOpen = edit && row.lessons.some((l) => l.id === edit.id) ? edit : null;
                   return (
-                    <tr key={row.section.id} className={`border-t border-slate-100 align-top ${busyId === row.section.id ? "opacity-60" : ""}`}>
-                      <td className="p-3 text-slate-400">{idx + 1}</td>
-                      <td className="p-3 font-medium text-slate-900 whitespace-nowrap">{row.section.name}</td>
+                    <tr key={row.section.id} className={`border-t border-rule align-top ${busyId === row.section.id ? "opacity-60" : ""}`}>
+                      <td className="p-3 text-muted">{idx + 1}</td>
+                      <td className="p-3 font-medium text-ink whitespace-nowrap">{row.section.name}</td>
                       <td className="p-3">
                         {row.lessons.length === 0 ? (
-                          <span className="text-slate-400">Not applied</span>
+                          <span className="text-muted">Not applied</span>
                         ) : (
                           <>
                             <div className="flex flex-wrap gap-1.5">
-                              {row.lessons.map((l) => {
-                                const color = subjectColor(l);
-                                const on = openId === l.id;
-                                return (
-                                  <button
-                                    key={l.id}
-                                    type="button"
-                                    title={`${l.subject}${isJoinedLesson(l) ? ` · shared ${joinedShort(l)}` : ""}${l.teachers?.length ? ` · ${l.teachers.join(", ")}` : ""}`}
-                                    onClick={() => toggleOpen(l.id)}
-                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border ${on ? "ring-2 ring-indigo-400" : ""} ${isJoinedLesson(l) ? "ring-1 ring-violet-400" : ""}`}
-                                    style={{ background: `${color}22`, borderColor: isJoinedLesson(l) ? "#7c3aed" : color, color: "var(--app-text)" }}
-                                  >
-                                    {l.subject}: {lessonLoad(l)}
-                                    {isJoinedLesson(l) ? <span className="text-violet-700 font-semibold">shared</span> : null}
-                                    {l.groups?.length ? <span className="text-slate-500 font-normal">· {l.groups[0]}</span> : null}
-                                    {l.duration_periods > 1 ? <span className="text-slate-500 font-normal">×{l.duration_periods}</span> : null}
-                                  </button>
-                                );
-                              })}
+                              {(() => {
+                                const groups = new Map<string, any[]>();
+                                for (const l of row.lessons) {
+                                  const key = String(l.subject_id || l.subject || l.id);
+                                  const list = groups.get(key) || [];
+                                  list.push(l);
+                                  groups.set(key, list);
+                                }
+                                return [...groups.values()].map((group) => {
+                                  const head = group[0];
+                                  const color = subjectColor(head);
+                                  const on = group.some((l) => openId === l.id);
+                                  const joined = group.some((l) => isJoinedLesson(l));
+                                  const loads = group.map((l) => lessonLoad(l));
+                                  const label =
+                                    group.length > 1 ? `${head.subject}: ${loads.join(" + ")}` : `${head.subject}: ${loads[0]}`;
+                                  const tip = group
+                                    .map((l) => {
+                                      const who = (l.teachers || []).join(", ") || "no staff";
+                                      return `${lessonLoad(l)} · ${who}`;
+                                    })
+                                    .join("; ");
+                                  return (
+                                    <button
+                                      key={group.map((l) => l.id).join("-")}
+                                      type="button"
+                                      title={`${head.subject}${joined ? ` · shared ${joinedShort(head)}` : ""} · ${tip}`}
+                                      onClick={() => {
+                                        const openInGroup = group.find((l) => l.id === openId);
+                                        if (openInGroup) {
+                                          const i = group.indexOf(openInGroup);
+                                          const next = group[(i + 1) % group.length];
+                                          if (next.id === openInGroup.id) toggleOpen(openInGroup.id);
+                                          else toggleOpen(next.id);
+                                          return;
+                                        }
+                                        toggleOpen(head.id);
+                                      }}
+                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border ${on ? "ring-2 ring-accent" : ""} ${joined ? "ring-1 ring-accent" : ""}`}
+                                      style={{ background: `${color}22`, borderColor: joined ? "var(--color-accent)" : color, color: "var(--app-text)" }}
+                                    >
+                                      {label}
+                                      {joined ? <span className="text-accent font-semibold">shared</span> : null}
+                                      {head.groups?.length ? <span className="text-muted font-normal">· {head.groups[0]}</span> : null}
+                                      {group.length === 1 && head.duration_periods > 1 ? (
+                                        <span className="text-muted font-normal">×{head.duration_periods}</span>
+                                      ) : null}
+                                    </button>
+                                  );
+                                });
+                              })()}
                             </div>
-                            <div className="mt-2 text-xs text-slate-600">
+                            <div className="mt-2 text-xs text-muted">
                               <strong>Total workload: {total}</strong>
                             </div>
                             {rowOpen && (
-                              <div className="mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-3">
+                              <div className="mt-3 p-3 rounded-lg border border-rule bg-paper-2 space-y-3">
                                 <div className="flex flex-wrap gap-2 items-end">
                                   <div className="flex-1 min-w-[8rem]">
                                     <MultiSearchSelect
@@ -550,7 +803,7 @@ export default function LessonsPanel({
                                       label="Classes"
                                       values={rowOpen.section_ids}
                                       onChange={(section_ids) => setEdit({ ...rowOpen, section_ids })}
-                                      options={sectionOpts}
+                                      options={keepCurrent(activeSectionOpts, yearSections, rowOpen.section_ids || [], "id")}
                                       placeholder="Classes"
                                     />
                                   </div>
@@ -560,7 +813,7 @@ export default function LessonsPanel({
                                       label="Subject"
                                       value={rowOpen.subject_id}
                                       onChange={(subject_id) => setEdit({ ...rowOpen, subject_id })}
-                                      options={subjectOpts}
+                                      options={keepCurrent(subjectOpts, yearSubjects, rowOpen.subject_id ? [rowOpen.subject_id] : [], "id")}
                                       placeholder="Subject"
                                     />
                                   </div>
@@ -569,8 +822,17 @@ export default function LessonsPanel({
                                       compact
                                       label="Teachers"
                                       values={rowOpen.teacher_resource_ids}
-                                      onChange={(teacher_resource_ids) => setEdit({ ...rowOpen, teacher_resource_ids })}
-                                      options={teacherOpts}
+                                      onChange={(teacher_resource_ids) => {
+                                        setEdit({ ...rowOpen, teacher_resource_ids });
+                                        if (teacher_resource_ids.length > 1) {
+                                          setEditSplit(true);
+                                          setEditLoads(splitLoads(teacher_resource_ids, rowOpen.frequency_per_week));
+                                        } else {
+                                          setEditSplit(false);
+                                          setEditLoads({});
+                                        }
+                                      }}
+                                      options={keepCurrent(teacherOpts, catalog?.teachers || [], rowOpen.teacher_resource_ids || [], "resource_id")}
                                       placeholder="Teachers"
                                     />
                                   </div>
@@ -581,7 +843,13 @@ export default function LessonsPanel({
                                         min={1}
                                         className={`${inputClass} py-1`}
                                         value={rowOpen.frequency_per_week}
-                                        onChange={(e) => setEdit({ ...rowOpen, frequency_per_week: Number(e.target.value) || 1 })}
+                                        onChange={(e) => {
+                                          const frequency_per_week = Number(e.target.value) || 1;
+                                          setEdit({ ...rowOpen, frequency_per_week });
+                                          if (editSplit && rowOpen.teacher_resource_ids.length > 1) {
+                                            setEditLoads(splitLoads(rowOpen.teacher_resource_ids, frequency_per_week));
+                                          }
+                                        }}
                                       />
                                     </Field>
                                   </div>
@@ -596,14 +864,79 @@ export default function LessonsPanel({
                                       />
                                     </Field>
                                   </div>
+                                  <div className="w-36">
+                                    <Field label="Blocks">
+                                      <input className={`${inputClass} py-1`} placeholder="2,1,1,1" value={rowOpen.blocks} onChange={(e) => setEdit({ ...rowOpen, blocks: e.target.value })} />
+                                    </Field>
+                                  </div>
+                                  <div className="w-40">
+                                    <SearchSelect
+                                      label="Week"
+                                      value={rowOpen.week_pattern_id}
+                                      onChange={(week_pattern_id) => setEdit({ ...rowOpen, week_pattern_id })}
+                                      options={(catalog?.week_patterns || []).map((p: any) => ({
+                value: p.id,
+                label: p.code === "WEEK_A" ? "Odd week" : p.code === "WEEK_B" ? "Even week" : p.name || "Every week",
+              }))}
+                                      placeholder="Every week"
+                                    />
+                                  </div>
+                                  <div className="min-w-[12rem] flex-1">
+                                    <MultiSearchSelect
+                                      label="Allowed rooms"
+                                      values={rowOpen.allowed_room_ids}
+                                      onChange={(allowed_room_ids) => setEdit({ ...rowOpen, allowed_room_ids })}
+                                      options={keepCurrent(
+                                        (catalog?.rooms || []).filter((r: any) => r.is_active !== false).map((r: any) => ({ value: r.resource_id, label: r.name })),
+                                        catalog?.rooms || [],
+                                        rowOpen.allowed_room_ids || [],
+                                        "resource_id",
+                                      )}
+                                      placeholder="Home room and type"
+                                    />
+                                  </div>
                                 </div>
+                                {rowOpen.teacher_resource_ids.length > 1 && (
+                                  <div className="space-y-2">
+                                    <label className="flex items-center gap-2 text-sm text-ink">
+                                      <input
+                                        type="checkbox"
+                                        checked={editSplit}
+                                        onChange={(e) => {
+                                          const on = e.target.checked;
+                                          setEditSplit(on);
+                                          if (on) setEditLoads(splitLoads(rowOpen.teacher_resource_ids, rowOpen.frequency_per_week));
+                                        }}
+                                      />
+                                      Split load into separate lessons (e.g. 3 + 2)
+                                    </label>
+                                    {editSplit && (
+                                      <div className="flex flex-wrap gap-3">
+                                        {rowOpen.teacher_resource_ids.map((id) => {
+                                          const name = teacherOpts.find((t) => t.value === id)?.label || id;
+                                          return (
+                                            <Field key={id} label={name}>
+                                              <input
+                                                type="number"
+                                                min={1}
+                                                className={`${inputClass} w-20 py-1`}
+                                                value={editLoads[id] ?? 0}
+                                                onChange={(e) => setEditLoads({ ...editLoads, [id]: Number(e.target.value) || 0 })}
+                                              />
+                                            </Field>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                                 <div className="flex items-center justify-end gap-2">
-                                  {dirty && <span className="text-xs text-amber-700 mr-auto">Unsaved changes</span>}
+                                  {dirty && <span className="text-xs text-warn mr-auto">Unsaved changes</span>}
                                   <button
                                     type="button"
                                     disabled={!dirty || busyId === rowOpen.id}
                                     onClick={saveEdit}
-                                    className="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-40"
+                                    className="h-8 px-3 bg-accent hover:bg-accent text-accent-ink rounded-lg text-sm font-medium disabled:opacity-55"
                                   >
                                     {busyId === rowOpen.id ? "Saving…" : "Save"}
                                   </button>
@@ -629,14 +962,14 @@ export default function LessonsPanel({
         )}
       </section>
 
-      <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <h2 className="px-4 py-3 font-semibold border-b border-slate-100">Teacher load</h2>
+      <section className="bg-paper-3 border border-rule rounded-xl overflow-hidden">
+        <h2 className="px-4 py-3 font-semibold border-b border-rule">Teacher load</h2>
         {yearWorkload.length === 0 ? (
-          <div className="p-6 text-sm text-slate-500">Load appears after you add lessons.</div>
+          <div className="p-6 text-sm text-muted">Load appears after you add lessons.</div>
         ) : (
           <div className="max-h-64 overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500 sticky top-0">
+              <thead className="bg-paper-2 text-left text-muted sticky top-0">
                 <tr>
                   <th className="p-3 font-medium">Teacher</th>
                   <th className="p-3 font-medium">Periods</th>
@@ -645,15 +978,15 @@ export default function LessonsPanel({
               </thead>
               <tbody>
                 {yearWorkload.map((w) => (
-                  <tr key={w.resource_id} className="border-t border-slate-100">
+                  <tr key={w.resource_id} className="border-t border-rule">
                     <td className="p-3">{w.name}</td>
-                    <td className="p-3 text-slate-600">{w.teaching}{w.contract ? ` / ${w.contract}` : ""}</td>
+                    <td className="p-3 text-muted">{w.teaching}{w.contract ? ` / ${w.contract}` : ""}</td>
                     <td className="p-3">
                       <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div className={`h-full ${w.utilization > 100 ? "bg-red-500" : "bg-indigo-500"}`} style={{ width: `${Math.min(100, w.utilization)}%` }} />
+                        <div className="flex-1 h-1.5 rounded-full bg-paper-2 overflow-hidden">
+                          <div className={`h-full ${w.utilization > 100 ? "bg-error" : "bg-accent"}`} style={{ width: `${Math.min(100, w.utilization)}%` }} />
                         </div>
-                        <span className="text-xs text-slate-500 w-9 text-right">{w.utilization}%</span>
+                        <span className="text-xs text-muted w-9 text-right">{w.utilization}%</span>
                       </div>
                     </td>
                   </tr>

@@ -179,6 +179,7 @@ class Subject(Base):
     short_name: Mapped[Optional[str]] = mapped_column(String(16))
     color: Mapped[Optional[str]] = mapped_column(String(16))
     is_difficult: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     category: Mapped[Optional[str]] = mapped_column(String(24), default="other")
 
 
@@ -204,6 +205,8 @@ class Lesson(Base):
     lesson_type: Mapped[str] = mapped_column(String(24), default="theory")
     priority: Mapped[int] = mapped_column(Integer, default=50)
     required_room_type: Mapped[Optional[str]] = mapped_column(String(40))
+    blocks: Mapped[Optional[list]] = mapped_column(JSON, default=None)
+    allowed_room_ids: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_unqualified: Mapped[bool] = mapped_column(Boolean, default=False)
     subject: Mapped[Subject] = relationship()
@@ -342,13 +345,17 @@ class ConstraintInstance(Base):
 class Absence(Base):
     __tablename__ = "absence"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("teacher.id"))
+    teacher_id: Mapped[Optional[str]] = mapped_column(ForeignKey("teacher.id"))
+    room_resource_id: Mapped[Optional[str]] = mapped_column(ForeignKey("resource.id"))
+    section_id: Mapped[Optional[str]] = mapped_column(ForeignKey("section.id"))
+    kind: Mapped[str] = mapped_column(String(16), default="teacher")  # teacher|room|section
+    reason: Mapped[Optional[str]] = mapped_column(String(24))  # sick|duty|training|other
     source: Mapped[str] = mapped_column(String(16), default="adhoc")  # leave|adhoc
     on_date: Mapped[date] = mapped_column(Date)
     time_in: Mapped[Optional[time]] = mapped_column(Time)
     time_out: Mapped[Optional[time]] = mapped_column(Time)
     leave_for: Mapped[Optional[str]] = mapped_column(String(24))  # fullday|morning|noon
-    teacher: Mapped[Teacher] = relationship()
+    teacher: Mapped[Optional[Teacher]] = relationship()
 
 
 class Exemption(Base):
@@ -360,6 +367,16 @@ class Exemption(Base):
     to_date: Mapped[Optional[date]] = mapped_column(Date)
     params: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
     teacher: Mapped[Teacher] = relationship()
+
+
+class SubstitutionWeight(Base):
+    __tablename__ = "substitution_weight"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    same_subject: Mapped[int] = mapped_column(Integer, default=15)
+    teaches_class: Mapped[int] = mapped_column(Integer, default=8)
+    free: Mapped[int] = mapped_column(Integer, default=25)
+    under_cap: Mapped[int] = mapped_column(Integer, default=10)
+    not_exempt: Mapped[int] = mapped_column(Integer, default=10)
 
 
 class Duty(Base):
@@ -393,6 +410,10 @@ class SubstitutionCover(Base):
     cover_teacher_id: Mapped[Optional[str]] = mapped_column(ForeignKey("teacher.id"))
     cover_teacher_ids: Mapped[Optional[list]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|covered|ignored
+    cover_type: Mapped[str] = mapped_column(String(16), default="covered")  # covered|cancelled|joined|moved|split|supervision
+    target_period_id: Mapped[Optional[str]] = mapped_column(ForeignKey("period.id"))
+    joined_section_id: Mapped[Optional[str]] = mapped_column(ForeignKey("section.id"))
+    cover_room_resource_id: Mapped[Optional[str]] = mapped_column(ForeignKey("resource.id"))
     score: Mapped[Optional[float]] = mapped_column(Float)
     explanation: Mapped[Optional[dict]] = mapped_column(JSON)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

@@ -68,7 +68,7 @@ export default function ExemptionsPanel({
 
  return (
  <div className="space-y-4">
- <section className="bg-white border rounded-lg p-4">
+ <section className="bg-paper-3 border rounded-lg p-4">
  <h2 className="font-medium mb-3">Add exemption</h2>
  <div className="grid md:grid-cols-5 gap-3 items-end">
  <SearchSelect
@@ -93,15 +93,15 @@ export default function ExemptionsPanel({
  type="button"
  disabled={saving || !teacherId}
  onClick={add}
- className="bg-slate-900 text-white rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+ className="bg-ink text-accent-ink rounded-lg px-3 py-2 text-sm disabled:opacity-55"
  >
  Exemp teacher
  </button>
  </div>
  </section>
- <section className="bg-white border rounded-lg overflow-hidden">
+ <section className="bg-paper-3 border rounded-lg overflow-hidden">
  <table className="w-full text-sm">
- <thead className="bg-slate-50 text-left text-slate-500">
+ <thead className="bg-paper-2 text-left text-muted">
  <tr>
  <th className="px-3 py-2 font-medium">Staff</th>
  <th className="px-3 py-2 font-medium">Type</th>
@@ -124,7 +124,7 @@ export default function ExemptionsPanel({
  ))}
  {exemptions.length === 0 && (
  <tr>
- <td colSpan={5} className="px-3 py-8 text-center text-slate-400">
+ <td colSpan={5} className="px-3 py-8 text-center text-muted">
  No exempted staff
  </td>
  </tr>

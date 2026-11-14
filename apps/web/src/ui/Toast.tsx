@@ -1,9 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { IconButton } from "./icons";
 
-type ToastItem = { id: number; text: string };
+type ToastTone = "ok" | "error";
+type ToastItem = { id: number; text: string; sticky?: boolean; tone: ToastTone };
+type ToastOptions = { sticky?: boolean; tone?: ToastTone };
+type ToastFn = ((text: string, opts?: ToastOptions) => void) & { clearErrors: () => void };
 
-const ToastCtx = createContext<(text: string) => void>(() => undefined);
+const ToastCtx = createContext<ToastFn>((() => undefined) as ToastFn);
 
 export function useToast() {
   return useContext(ToastCtx);
@@ -13,12 +16,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
 
-  const push = useCallback((text: string) => {
-    const value = (text || "").trim();
-    if (!value) return;
-    const id = nextId.current++;
-    setItems((prev) => [...prev, { id, text: value }]);
+  const clearErrors = useCallback(() => {
+    setItems((prev) => prev.filter((item) => !(item.tone === "error" && item.sticky)));
   }, []);
+
+  const push = useCallback(
+    (text: string, opts?: ToastOptions) => {
+      const value = (text || "").trim();
+      const tone = opts?.tone || "ok";
+      const sticky = Boolean(opts?.sticky);
+      if (!value) {
+        if (tone === "error" || sticky) clearErrors();
+        return;
+      }
+      const id = nextId.current++;
+      setItems((prev) => {
+        const rest = sticky && tone === "error" ? prev.filter((item) => !(item.tone === "error" && item.sticky)) : prev;
+        return [...rest, { id, text: value, sticky, tone }];
+      });
+    },
+    [clearErrors]
+  ) as ToastFn;
+  push.clearErrors = clearErrors;
 
   function clear(id: number) {
     setItems((prev) => prev.filter((item) => item.id !== id));
@@ -32,14 +51,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={push}>
       {children}
       {items.length > 0 && (
-        <div className="fixed top-4 right-4 z-[80] w-80 max-w-[calc(100vw-2rem)] space-y-2 pointer-events-none">
+        <div className="toast-stack">
           {items.map((item) => (
-            <ToastCard key={item.id} text={item.text} onClear={() => clear(item.id)} />
+            <ToastCard
+              key={item.id}
+              text={item.text}
+              sticky={item.sticky}
+              tone={item.tone}
+              onClear={() => clear(item.id)}
+            />
           ))}
           {items.length > 1 && (
             <button
               type="button"
-              className="pointer-events-auto w-full text-xs text-slate-500 hover:text-slate-800 bg-white/90 border border-slate-200 rounded-lg px-2 py-1 shadow-sm"
+              className="pointer-events-auto w-full text-xs text-muted hover:text-ink bg-paper-3 border border-rule px-2 py-1"
               onClick={clearAll}
             >
               Clear all
@@ -51,18 +76,38 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function ToastCard({ text, onClear }: { text: string; onClear: () => void }) {
+function ToastCard({
+  text,
+  sticky,
+  tone,
+  onClear,
+}: {
+  text: string;
+  sticky?: boolean;
+  tone: ToastTone;
+  onClear: () => void;
+}) {
   const onClearRef = useRef(onClear);
+  const [out, setOut] = useState(false);
   onClearRef.current = onClear;
   useEffect(() => {
-    const timer = window.setTimeout(() => onClearRef.current(), 3000);
+    if (sticky) return;
+    const timer = window.setTimeout(() => setOut(true), 3000);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [sticky]);
+  useEffect(() => {
+    if (!out) return;
+    const timer = window.setTimeout(() => onClearRef.current(), 420);
+    return () => window.clearTimeout(timer);
+  }, [out]);
 
   return (
-    <div className="pointer-events-auto flex items-start gap-2 rounded-xl border border-emerald-200 bg-white shadow-lg px-3 py-2 text-sm text-emerald-800">
-      <p className="flex-1 min-w-0">{text}</p>
-      <IconButton icon="close" label="Clear" onClick={onClear} />
+    <div
+      className={`toast-card text-sm${tone === "error" ? " is-error" : ""}${out ? " is-out" : ""}`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      <p>{text}</p>
+      <IconButton icon="close" label="Clear" variant={tone === "error" ? "danger" : undefined} onClick={() => setOut(true)} />
     </div>
   );
 }

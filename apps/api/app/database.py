@@ -16,6 +16,56 @@ engine = create_engine(settings.database_url, echo=False, connect_args=connect_a
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+def _relax_not_null(bind, table: str, column: str) -> None:
+    """SQLite cannot ALTER a column to nullable. Rebuild absence so room and class rows can omit a teacher."""
+    if table != "absence" or column != "teacher_id":
+        return
+    insp = inspect(bind)
+    if table not in insp.get_table_names():
+        return
+    col = next((c for c in insp.get_columns(table) if c["name"] == column), None)
+    if not col or col.get("nullable"):
+        return
+    with bind.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(
+            text(
+                """
+                CREATE TABLE absence__new (
+                    id VARCHAR(36) PRIMARY KEY,
+                    teacher_id VARCHAR(36),
+                    source VARCHAR(16),
+                    on_date DATE,
+                    time_in TIME,
+                    time_out TIME,
+                    leave_for VARCHAR(24),
+                    room_resource_id VARCHAR(36),
+                    section_id VARCHAR(36),
+                    kind VARCHAR(16),
+                    reason VARCHAR(24)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO absence__new (
+                    id, teacher_id, source, on_date, time_in, time_out, leave_for,
+                    room_resource_id, section_id, kind, reason
+                )
+                SELECT
+                    id, teacher_id, source, on_date, time_in, time_out, leave_for,
+                    room_resource_id, section_id, kind, reason
+                FROM absence
+                """
+            )
+        )
+        conn.execute(text("DROP TABLE absence"))
+        conn.execute(text("ALTER TABLE absence__new RENAME TO absence"))
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
 def _ensure_columns(bind, table: str, specs: list[tuple[str, str]]) -> None:
     insp = inspect(bind)
     if table not in insp.get_table_names():
@@ -61,7 +111,7 @@ def ensure_schema(bind=engine) -> None:
             ("assistant_class_teacher_id", "assistant_class_teacher_id VARCHAR(36)"),
         ],
     )
-    _ensure_columns(bind, "subject", [("category", "category VARCHAR(24)")])
+    _ensure_columns(bind, "subject", [("category", "category VARCHAR(24)"), ("is_active", "is_active BOOLEAN DEFAULT 1")])
     _ensure_columns(bind, "academic_year", [("short_name", "short_name VARCHAR(16)")])
     _ensure_columns(bind, "teacher", [("short_name", "short_name VARCHAR(16)")])
     _ensure_columns(bind, "section", [("short_name", "short_name VARCHAR(16)")])
@@ -95,8 +145,31 @@ def ensure_schema(bind=engine) -> None:
             ("required_room_type", "required_room_type VARCHAR(40)"),
             ("locked", "locked BOOLEAN"),
             ("allow_unqualified", "allow_unqualified BOOLEAN"),
+            ("blocks", "blocks JSON"),
+            ("allowed_room_ids", "allowed_room_ids JSON"),
         ],
     )
+    _ensure_columns(
+        bind,
+        "absence",
+        [
+            ("room_resource_id", "room_resource_id VARCHAR(36)"),
+            ("section_id", "section_id VARCHAR(36)"),
+            ("kind", "kind VARCHAR(16)"),
+            ("reason", "reason VARCHAR(24)"),
+        ],
+    )
+    _ensure_columns(
+        bind,
+        "substitution_cover",
+        [
+            ("cover_type", "cover_type VARCHAR(16)"),
+            ("target_period_id", "target_period_id VARCHAR(36)"),
+            ("joined_section_id", "joined_section_id VARCHAR(36)"),
+            ("cover_room_resource_id", "cover_room_resource_id VARCHAR(36)"),
+        ],
+    )
+    _relax_not_null(bind, "absence", "teacher_id")
 
 
 def get_db():

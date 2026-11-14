@@ -6,6 +6,7 @@ import PageHelp from "../ui/PageHelp";
 import SearchSelect, { Field, inputClass, MultiSearchSelect } from "../ui/SearchSelect";
 import { currentYearId, onYearChange, timetablesUrl } from "../year";
 import { useToast } from "../ui/Toast";
+import NeedTemplate from "../ui/NeedTemplate";
 const TEMPLATE_KEY = "construct-template-id";
 
 function onTemplate(item: { time_grid_id?: string; time_grid_ids?: string[] }, gridId: string) {
@@ -76,7 +77,7 @@ export default function GroupsPage() {
  const templateGridId = yearTemplates.find((t: any) => t.id === templateId)?.time_grid_id || "";
 
  if (!catalog) {
- return <div className="text-slate-500 py-16 text-center">Loading groups…</div>;
+ return <div className="text-muted py-16 text-center">Loading groups…</div>;
  }
 
  const sections = (catalog.sections || []).filter((s: any) => !yearId || s.academic_year_id === yearId);
@@ -97,15 +98,17 @@ export default function GroupsPage() {
  return onTemplate(g, templateGridId);
  });
 
+ if (catalog && yearTemplates.length === 0) return <NeedTemplate what="Groups" />;
+
  return (
  <div className="max-w-6xl mx-auto space-y-4">
  <header className="flex flex-wrap justify-between gap-3 items-start">
  <div>
  <div className="flex items-center gap-2">
- <h1 className="text-2xl font-semibold text-slate-900">Groups</h1>
+ <h1 className="text-2xl font-semibold text-ink">Groups</h1>
  <PageHelp page="groups" />
  </div>
- <p className="text-slate-500 text-sm mt-1 max-w-3xl">
+ <p className="text-muted text-sm mt-1 max-w-3xl">
  Period groups and class splits belong to a template, like lessons. Switch template to see only that plan.
  </p>
  </div>
@@ -123,10 +126,10 @@ export default function GroupsPage() {
  </header>
 
  {(err || missing.length > 0) && (
- <div role="alert" className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-red-900">
+ <div role="alert" className="rounded-xl border-2 border-error bg-error-well px-4 py-3 text-error">
  <div className="flex items-start justify-between gap-3">
  <div>
- <p className="font-semibold">{err || "This period group could no be created."}</p>
+ <p className="font-semibold">{err || "This period group could not be created."}</p>
  {missing.length > 0 && (
  <>
  <p className="text-sm mt-1">Missing lesson cards — add these on Construct → Lessons first:</p>
@@ -135,7 +138,7 @@ export default function GroupsPage() {
  <li key={row}>{row}</li>
  ))}
  </ul>
- <Link to="/construct" className="inline-block mt-3 text-sm font-medium text-indigo-700 underline">
+ <Link to="/construct" className="inline-block mt-3 text-sm font-medium text-accent underline">
  Open Construct o add lessons
  </Link>
  </>
@@ -155,9 +158,9 @@ export default function GroupsPage() {
  )}
 
  <div className="grid lg:grid-cols-2 gap-4">
- <section className="bg-white border rounded-xl p-4 shadow-sm">
+ <section className="bg-paper-3 border rounded-xl p-4">
  <h2 className="font-semibold">Period group</h2>
- <p className="text-xs text-slate-500 mt-1 mb-3">
+ <p className="text-xs text-muted mt-1 mb-3">
  Add the subject–class lessons first. Example: LANGUAGE = Hindi + Kannada + English for Grade II B and II C.
  </p>
  <form
@@ -185,11 +188,12 @@ export default function GroupsPage() {
  time_grid_id: templateGridId,
  }),
  });
+ const createdName = bandName.trim();
  setBandName("");
  setBandSubjects([]);
  setBandSections([]);
  await load();
- toast("Saved");
+ toast(`Created the period group “${createdName}”.`);
  } catch (e: any) {
  setErr(e.message);
  setMissing(missingFromError(e));
@@ -215,7 +219,7 @@ export default function GroupsPage() {
  options={sections.map((s: any) => ({ value: s.id, label: s.name }))}
  placeholder="Classes"
  />
- <button disabled={saving === "band"} className="h-10 px-4 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+ <button disabled={saving === "band"} className="h-10 px-4 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
  {saving === "band" ? "Saving…" : "Create period group"}
  </button>
  </form>
@@ -224,8 +228,8 @@ export default function GroupsPage() {
  <li key={b.id} className="py-2 flex justify-between gap-2">
  <span>
  <span className="font-medium">{b.name}</span>
- {b.subjects?.length ? <span className="text-slate-500"> · {b.subjects.join(", ")}</span> : null}
- {b.sections?.length ? <span className="text-slate-400"> · {b.sections.join(" + ")}</span> : null}
+ {b.subjects?.length ? <span className="text-muted"> · {b.subjects.join(", ")}</span> : null}
+ {b.sections?.length ? <span className="text-muted"> · {b.sections.join(" + ")}</span> : null}
  </span>
  <IconButton
  icon="trash"
@@ -235,7 +239,7 @@ export default function GroupsPage() {
  try {
  await api(`/v1/bands/${b.id}`, { method: "DELETE" });
  await load();
- toast("Saved");
+ toast(`Removed the period group “${b.name}”.`);
  } catch (e: any) {
  setErr(e.message);
  }
@@ -243,13 +247,13 @@ export default function GroupsPage() {
  />
  </li>
  ))}
- {!bands.length && <li className="py-3 text-slate-400">No period groups on this template.</li>}
+ {!bands.length && <li className="py-3 text-muted">No period groups on this template.</li>}
  </ul>
  </section>
 
- <section className="bg-white border rounded-xl p-4 shadow-sm">
+ <section className="bg-paper-3 border rounded-xl p-4">
  <h2 className="font-semibold">Class split</h2>
- <p className="text-xs text-slate-500 mt-1 mb-3">
+ <p className="text-xs text-muted mt-1 mb-3">
  Part of one class only (French A). Not the same as LANGUAGE.
  </p>
  <form
@@ -277,9 +281,10 @@ export default function GroupsPage() {
  time_grid_id: templateGridId,
  }),
  });
+ const createdName = groupName.trim();
  setGroupName("");
  await load();
- toast("Saved");
+ toast(`Created the split “${createdName}”.`);
  } catch (e: any) {
  setErr(e.message);
  } finally {
@@ -297,7 +302,7 @@ export default function GroupsPage() {
  <Field label="Spli name">
  <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="French A" />
  </Field>
- <button disabled={saving === "split"} className="h-10 px-4 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+ <button disabled={saving === "split"} className="h-10 px-4 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
  {saving === "split" ? "Saving…" : "Create split"}
  </button>
  </form>
@@ -313,7 +318,7 @@ export default function GroupsPage() {
  try {
  await api(`/v1/groups/${g.id}`, { method: "DELETE" });
  await load();
- toast("Saved");
+ toast(`Removed the split “${g.name}”.`);
  } catch (e: any) {
  setErr(e.message);
  }
@@ -321,7 +326,7 @@ export default function GroupsPage() {
  />
  </li>
  ))}
- {!splits.length && <li className="py-3 text-slate-400">No class splits on this template.</li>}
+ {!splits.length && <li className="py-3 text-muted">No class splits on this template.</li>}
  </ul>
  </section>
  </div>

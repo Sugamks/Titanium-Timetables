@@ -40,13 +40,21 @@ def existing_keys(lessons, section_id: str, time_grid_id: str | None = None) -> 
     return {(les.subject_id, getattr(les, "time_grid_id", None)) for les in covering_section(lessons, section_id, time_grid_id)}
 
 
+def match_lesson(lessons, section_id: str, subject_id: str, time_grid_id: str | None = None):
+    """Same subject on that class (and template), if any."""
+    for les in covering_section(lessons, section_id, time_grid_id):
+        if getattr(les, "subject_id", None) == subject_id:
+            return les
+    return None
+
+
 def clone_decision(src, target_id: str, existing: set, skip_existing: bool) -> str:
     sids = section_ids_of(src)
     if len(sids) > 1:
         return "joined"
     if target_id in sids:
-        return "existing"
+        return "self"
     key = (src.subject_id, getattr(src, "time_grid_id", None))
     if skip_existing and key in existing:
-        return "existing"
+        return "update"
     return "clone"

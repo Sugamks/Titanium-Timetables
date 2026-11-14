@@ -15,6 +15,7 @@ import ClassTimetablePage from "./pages/ClassTimetablePage";
 import GroupsPage from "./pages/GroupsPage";
 import AuditPage from "./pages/AuditPage";
 import ProfilePage from "./pages/ProfilePage";
+import RoomsPage from "./pages/RoomsPage";
 
 function Private({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="lessons" element={<SchedulingPage />} />
         <Route path="designer" element={<DesignerPage />} />
         <Route path="constraints" element={<ConstraintsPage />} />
+        <Route path="rooms" element={<RoomsPage />} />
         <Route path="generate" element={<GeneratePage />} />
         <Route path="timetable" element={<TimetablePage />} />
         <Route path="operations" element={<OperationsPage />} />

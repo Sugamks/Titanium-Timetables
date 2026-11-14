@@ -16,6 +16,7 @@ function readStoredDark(): boolean {
 
 function applyDark(dark: boolean) {
  document.documentElement.classList.toggle("dark", dark);
+ document.documentElement.dataset.mode = dark ? "dark" : "light";
  try {
  localStorage.setItem(THEME_KEY, dark ? "1" : "0");
  } catch {

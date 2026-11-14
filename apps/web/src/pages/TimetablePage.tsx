@@ -1,5 +1,7 @@
 import { useEffect, useState, FormEvent } from "react";
 import { api } from "../api";
+import { chipStyle } from "../ui/colors";
+import { cardFullTitle, cardShortLabel } from "../ui/lessonMarks";
 import { isTeachingPeriod, periodOnDay, periodTimeRange, periodTypeLabel } from "../periods";
 import { currentYearId, notifyCatalog, onYearChange, setCurrentYearId, timetablesUrl } from "../year";
 import { IconButton } from "../ui/icons";
@@ -7,7 +9,6 @@ import { useToast } from "../ui/Toast";
 import BellTimesEditor from "./timetable/BellTimesEditor";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
-import { chipStyle } from "../ui/colors";
 import { inputClass } from "../ui/SearchSelect";
 import { shortFromName } from "../ui/shortName";
 import SaveFileButton from "../ui/TimetableFile";
@@ -184,7 +185,7 @@ export default function TimetablePage() {
       setEditOpen(false);
       setPreviewReady(false);
       await loadTemplates();
-      toast("Template saved.");
+      toast(`Saved template “${edit.name.trim()}”.`);
     } catch (e: any) {
       setErr(apiError(e));
     } finally {
@@ -298,7 +299,7 @@ export default function TimetablePage() {
     try {
       await refreshTemplate();
       setPreviewReady(true);
-      toast("Times saved. The weekly timetable is below.");
+      toast(`Saved bell times for “${selected?.name || "this template"}”. The week is below.`);
     } catch (e: any) {
       setErr(apiError(e));
     } finally {
@@ -317,7 +318,7 @@ export default function TimetablePage() {
       });
       setPreviewReady(false);
       await refreshTemplate();
-      toast("Saved");
+      toast(`Added ${periodTypeLabel(periodType)} to “${selected?.name || "this template"}”.`);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -331,7 +332,14 @@ export default function TimetablePage() {
       await api(`/v1/periods/${pid}`, { method: "PATCH", body: JSON.stringify(body) });
       setPreviewReady(false);
       await refreshTemplate();
-      toast("Saved");
+      const bits = [
+        body.name ? `name “${body.name}”` : "",
+        body.period_type ? `type ${periodTypeLabel(body.period_type)}` : "",
+        body.start_time && body.end_time ? `time ${String(body.start_time).slice(0, 5)} to ${String(body.end_time).slice(0, 5)}` : "",
+        body.start_time && !body.end_time ? `start ${String(body.start_time).slice(0, 5)}` : "",
+        body.end_time && !body.start_time ? `end ${String(body.end_time).slice(0, 5)}` : "",
+      ].filter(Boolean);
+      toast(bits.length ? `Updated this period: ${bits.join(", ")}.` : "Updated this period.");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -345,7 +353,10 @@ export default function TimetablePage() {
         body: JSON.stringify({ times: { [periodId]: body } }),
       });
       await refreshTemplate();
-      toast("Saved");
+      const dayName = (selected?.days || []).find((d: any) => d.id === dayId)?.name || "that day";
+      const start = body.start_time ? String(body.start_time).slice(0, 5) : "";
+      const end = body.end_time ? String(body.end_time).slice(0, 5) : "";
+      toast(start && end ? `Saved ${dayName} as ${start} to ${end}. Other days keep the default.` : `Saved the clock times for ${dayName}.`);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -358,7 +369,7 @@ export default function TimetablePage() {
       await api(`/v1/periods/${pid}`, { method: "DELETE" });
       setPreviewReady(false);
       await refreshTemplate();
-      toast("Saved");
+      toast("Removed that period. Lessons can no longer sit on it.");
     } catch (e: any) {
       setErr(e.message);
     }
@@ -396,7 +407,7 @@ export default function TimetablePage() {
       if (created?.id) setCurrentYearId(created.id);
       notifyCatalog();
       await loadYears();
-      toast("Saved");
+      toast(`Added the academic year “${name}”.`);
     } catch (error: any) {
       setErr(error.message || "Could not add year");
     } finally {
@@ -412,13 +423,13 @@ export default function TimetablePage() {
             <h1 className="text-2xl font-semibold whitespace-nowrap">Timetable templates</h1>
             <PageHelp page="templates" />
           </div>
-          <p className="text-slate-500 text-sm mt-1 max-w-xl">
-            Create bell-time templates here. Save writes year-template.ttl. Teachers, classes, and subjects stay in this app. Bell times, constraints, and rules are saved in the file.
+          <p className="text-muted text-sm mt-1 max-w-xl">
+            Create the template here before classes, subjects, rooms, or lessons. Save file writes year-template.ttl with teachers, classes, subjects, rooms, lessons, bell times, constraints, and the placed week for this template.
           </p>
         </div>
         <SaveFileButton yearId={currentYearId()} templateId={selectedId} />
         <form onSubmit={addYear} className="flex shrink-0 gap-2 items-end">
-            <label className="text-xs text-slate-500 w-36 shrink-0">
+            <label className="text-xs text-muted w-36 shrink-0">
               New academic year
               <input
                 className={`${inputClass} mt-1 h-10`}
@@ -433,7 +444,7 @@ export default function TimetablePage() {
                 required
               />
             </label>
-            <label className="text-xs text-slate-500 w-28 shrink-0">
+            <label className="text-xs text-muted w-28 shrink-0">
               Short
               <input
                 className={`${inputClass} mt-1 h-10`}
@@ -450,7 +461,7 @@ export default function TimetablePage() {
             <button
               type="submit"
               disabled={yearSaving}
-              className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+              className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55"
             >
               Add year
             </button>
@@ -458,7 +469,7 @@ export default function TimetablePage() {
       </header>
       <ErrorBanner message={err} onClear={() => setErr("")} />
 
-      <form onSubmit={createTemplate} className="bg-white border rounded-lg p-4 grid gap-3 md:grid-cols-6 items-end">
+      <form onSubmit={createTemplate} className="bg-paper-3 border rounded-lg p-4 grid gap-3 md:grid-cols-6 items-end">
         <label className="text-sm md:col-span-2">
           New template
           <input
@@ -510,95 +521,105 @@ export default function TimetablePage() {
         </button>
       </form>
 
-      <section className="bg-white border rounded-lg overflow-auto">
-        <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50">
-          <span className="text-sm font-medium text-slate-700">Templates</span>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+      <section className="bg-paper-3 border rounded-lg">
+        <div className="flex items-center justify-between px-3 py-2 border-b bg-paper-2">
+          <span className="text-sm font-medium text-ink">Templates</span>
+          <label className="flex items-center gap-2 text-sm text-muted">
             <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
             Show deleted
           </label>
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left">
-            <tr>
-              <th className="p-2">Name</th>
-              <th className="p-2">Source</th>
-              <th className="p-2">Status</th>
-              <th className="p-2">Days</th>
-              <th className="p-2">Periods</th>
-              <th className="p-2">Versions</th>
-              <th className="p-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {tts.length === 0 && (
-              <tr>
-                <td className="p-3 text-slate-500" colSpan={7}>
-                  {showDeleted
-                    ? "No templates (including deleted) for this year."
-                    : "No templates for this year yet. Create one above."}
-                </td>
-              </tr>
-            )}
-            {tts.map((t) => (
-              <tr
+        <ul className="divide-y divide-[var(--color-rule)]">
+          {tts.length === 0 && (
+            <li className="p-3 text-sm text-muted">
+              {showDeleted
+                ? "No templates (including deleted) for this year."
+                : "No templates for this year yet. Create one above."}
+            </li>
+          )}
+          {tts.map((t) => {
+            const versions = t.versions || [];
+            const published = versions.find((v: any) => v.status === "published");
+            const draft = versions.find((v: any) => v.status === "draft");
+            const approved = versions.find((v: any) => v.status === "approved");
+            return (
+              <li
                 key={t.id}
                 onClick={() => setSelectedId(t.id)}
-                className={`border-t cursor-pointer ${selectedId === t.id ? "bg-indigo-50" : "hover:bg-slate-50"} ${t.is_deleted ? "text-slate-400" : ""}`}
+                className={`px-3 py-2.5 cursor-pointer flex flex-wrap items-start gap-2 justify-between ${selectedId === t.id ? "bg-paper-2" : "hover:bg-paper-2"} ${t.is_deleted ? "text-muted" : ""}`}
               >
-                <td className="p-2">
-                  <div className={`font-medium ${t.is_deleted ? "line-through" : ""}`}>{t.name}</div>
-                  {t.description && <div className="text-xs text-slate-500">{t.description}</div>}
-                </td>
-                <td className="p-2 text-xs uppercase">{t.source}</td>
-                <td className="p-2">
+                <div className="min-w-0 flex-1">
+                  <div className={`font-medium text-sm ${t.is_deleted ? "line-through" : ""}`}>{t.name}</div>
+                  <div className="text-xs text-muted mt-0.5">
+                    {t.source}
+                    {" · "}
+                    {t.day_count} days
+                    {" · "}
+                    {t.teaching_count ?? t.period_count} periods
+                    {(t.break_count || 0) > 0 ? ` + ${t.break_count} breaks` : ""}
+                    {t.is_disabled ? " · disabled" : ""}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {t.is_deleted ? (
+                      <span className="text-[11px] bg-error-well text-error rounded px-1.5 py-0.5">Deleted</span>
+                    ) : (
+                      <>
+                        {published && (
+                          <span className="text-[11px] bg-success-well text-success rounded px-1.5 py-0.5">
+                            Published · v{published.number}
+                          </span>
+                        )}
+                        {draft && (
+                          <span className="text-[11px] bg-warn-well text-warn rounded px-1.5 py-0.5">
+                            Draft · v{draft.number}
+                          </span>
+                        )}
+                        {approved && !published && (
+                          <span className="text-[11px] bg-paper-2 text-ink rounded px-1.5 py-0.5 border border-rule">
+                            Approved · v{approved.number}
+                          </span>
+                        )}
+                        {!published && !draft && !approved && (
+                          <span className="text-[11px] bg-paper-2 text-muted rounded px-1.5 py-0.5 border border-rule">
+                            {t.status || "inactive"}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="inline-flex shrink-0" onClick={(e) => e.stopPropagation()}>
                   {t.is_deleted ? (
-                    <span className="text-xs bg-red-100 text-red-800 rounded px-1.5 py-0.5">Deleted</span>
-                  ) : (
                     <>
-                      {t.status}
-                      {t.is_disabled ? " · disabled" : ""}
-                    </>
-                  )}
-                </td>
-                <td className="p-2">{t.day_count}</td>
-                <td className="p-2">
-                  {t.teaching_count ?? t.period_count}
-                  {(t.break_count || 0) > 0 ? <span className="text-slate-500"> + {t.break_count} breaks</span> : ""}
-                </td>
-                <td className="p-2">{t.versions?.length || 0}</td>
-                <td className="p-1 text-right whitespace-nowrap w-36" onClick={(e) => e.stopPropagation()}>
-                  {t.is_deleted ? (
-                    <div className="inline-flex">
                       <IconButton icon="restore" label="Restore template" onClick={() => restoreTemplate(t.id)} />
                       <IconButton icon="trash" label="Delete permanently" variant="danger" onClick={() => askPurge(t.id)} />
-                    </div>
+                    </>
                   ) : (
-                    <div className="inline-flex">
+                    <>
                       <IconButton icon="edit" label="Template settings" onClick={() => openEdit(t)} />
                       <IconButton icon="copy" label="Clone template" onClick={() => askClone(t.id)} />
                       <IconButton icon="check" label="Integrity check" onClick={() => runCheck(t.id)} disabled={checkBusy === t.id} />
                       <IconButton icon="trash" label="Delete template" variant="danger" onClick={() => askDelete(t.id)} />
-                    </div>
+                    </>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
       {editOpen && selected && !deleted && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" onClick={() => !updating && setEditOpen(false)}>
+        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4 overflow-auto" onClick={() => !updating && setEditOpen(false)}>
           <form
             onSubmit={saveTemplate}
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-xl shadow-xl border w-full max-w-lg mt-16 p-5 space-y-4"
+            className="bg-paper-3 rounded-xl border w-full max-w-lg mt-16 p-5 space-y-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Template settings</h2>
-                <p className="text-sm text-slate-500">Name, days, and teaching period count. Breaks stay as they are.</p>
+                <p className="text-sm text-muted">Name, days, and teaching period count. Breaks stay as they are.</p>
               </div>
               <IconButton icon="close" label="Close" onClick={() => setEditOpen(false)} />
             </div>
@@ -646,11 +667,11 @@ export default function TimetablePage() {
             </div>
             <div className="border rounded-lg p-3">
               <div className="text-sm font-medium">Teaching periods</div>
-              <p className="text-xs text-slate-500 mt-0.5 mb-2">Increase appends a new period at the end of the day. Decrease removes the last teaching period if it has no lessons.</p>
+              <p className="text-xs text-muted mt-0.5 mb-2">Increase appends a new period at the end of the day. Decrease removes the last teaching period if it has no lessons.</p>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="w-9 h-9 border rounded-lg text-lg hover:bg-slate-50 disabled:opacity-40"
+                  className="w-9 h-9 border rounded-lg text-lg hover:bg-paper-2 disabled:opacity-55"
                   disabled={edit.period_count <= 1}
                   onClick={() => setEdit({ ...edit, period_count: Math.max(1, edit.period_count - 1) })}
                   aria-label="Decrease periods"
@@ -667,7 +688,7 @@ export default function TimetablePage() {
                 />
                 <button
                   type="button"
-                  className="w-9 h-9 border rounded-lg text-lg hover:bg-slate-50 disabled:opacity-40"
+                  className="w-9 h-9 border rounded-lg text-lg hover:bg-paper-2 disabled:opacity-55"
                   disabled={edit.period_count >= 20}
                   onClick={() => setEdit({ ...edit, period_count: Math.min(20, edit.period_count + 1) })}
                   aria-label="Increase periods"
@@ -675,7 +696,7 @@ export default function TimetablePage() {
                   +
                 </button>
                 {(selected.break_count || 0) > 0 && (
-                  <span className="text-xs text-slate-500">+ {selected.break_count} break{selected.break_count === 1 ? "" : "s"} kept</span>
+                  <span className="text-xs text-muted">+ {selected.break_count} break{selected.break_count === 1 ? "" : "s"} kept</span>
                 )}
               </div>
             </div>
@@ -709,7 +730,7 @@ export default function TimetablePage() {
               <button type="button" className="border rounded-lg px-3 py-1.5 text-sm" onClick={() => setEditOpen(false)}>
                 Cancel
               </button>
-              <button type="submit" disabled={updating} className="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm disabled:opacity-60">
+              <button type="submit" disabled={updating} className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-sm disabled:opacity-60">
                 {updating ? "Saving…" : "Save"}
               </button>
             </div>
@@ -718,8 +739,8 @@ export default function TimetablePage() {
       )}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4" onClick={() => !confirmBusy && setConfirm(null)}>
-          <div className="bg-white rounded-xl shadow-xl border w-full max-w-md mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4" onClick={() => !confirmBusy && setConfirm(null)}>
+          <div className="bg-paper-3 rounded-xl border w-full max-w-md mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-lg font-semibold">
                 {confirm.kind === "clone" ? "Clone template" : confirm.kind === "purge" ? "Delete permanently" : "Delete template"}
@@ -728,7 +749,7 @@ export default function TimetablePage() {
             </div>
             {confirm.kind === "clone" ? (
               <>
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-muted">
                   Creates “{confirm.name} copy” with the same days and bell times. The original stays as it is.
                 </p>
                 <label className="flex items-center gap-2 text-sm">
@@ -737,11 +758,11 @@ export default function TimetablePage() {
                 </label>
               </>
             ) : confirm.kind === "purge" ? (
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted">
                 Permanently remove “{confirm.name}” and its drafts. This cannot be undone.
               </p>
             ) : (
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted">
                 Hide “{confirm.name}” from Construct. You can restore it later from Show deleted.
               </p>
             )}
@@ -753,7 +774,7 @@ export default function TimetablePage() {
               <button
                 type="button"
                 disabled={confirmBusy}
-                className={`rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-60 ${confirm.kind === "clone" ? "bg-indigo-600" : "bg-red-600"}`}
+                className={`rounded-lg px-3 py-1.5 text-sm text-accent-ink disabled:opacity-60 ${confirm.kind === "clone" ? "bg-accent" : "bg-error"}`}
                 onClick={runConfirm}
               >
                 {confirmBusy
@@ -770,28 +791,28 @@ export default function TimetablePage() {
       )}
 
       {check && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4" onClick={() => setCheck(null)}>
-          <div className="bg-white rounded-xl shadow-xl border w-full max-w-lg mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4" onClick={() => setCheck(null)}>
+          <div className="bg-paper-3 rounded-xl border w-full max-w-lg mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Integrity check</h2>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted">
                   {check.template_name}
                   {check.version_label ? ` · ${check.version_label}` : ""}
                 </p>
               </div>
               <IconButton icon="close" label="Close" onClick={() => setCheck(null)} />
             </div>
-            <div className={`rounded-lg border px-3 py-2 text-sm ${check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+            <div className={`rounded-lg border px-3 py-2 text-sm ${check.ok ? "border-success bg-success-well text-success" : "border-error bg-error-well text-error"}`}>
               {check.ok ? (check.warn_count ? "No hard errors. Review the warnings." : "No clashes or missing setup.") : check.summary}
             </div>
             {(check.issues || []).length === 0 ? (
-              <p className="text-sm text-slate-500">Bells, lessons, and placements look consistent.</p>
+              <p className="text-sm text-muted">Bells, lessons, and placements look consistent.</p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {check.issues.map((i: any, idx: number) => (
-                  <li key={`${i.code}-${idx}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <span className={`text-[10px] uppercase font-semibold mr-2 ${i.severity === "error" ? "text-red-700" : "text-amber-700"}`}>
+                  <li key={`${i.code}-${idx}`} className="rounded-lg border border-rule bg-paper-2 px-3 py-2">
+                    <span className={`text-xs  font-semibold mr-2 ${i.severity === "error" ? "text-error" : "text-warn"}`}>
                       {i.severity}
                     </span>
                     {i.message}
@@ -811,14 +832,14 @@ export default function TimetablePage() {
       {selected && (
         <>
           {deleted && (
-            <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 text-sm flex items-center justify-between gap-3">
+            <div className="bg-error-well border border-error text-error rounded-lg px-4 py-3 text-sm flex items-center justify-between gap-3">
               <span>This template is deleted. Restore it to edit periods or use it in Designer and Generate.</span>
-              <IconButton icon="restore" label="Restore template" variant="bordered" className="bg-white border-red-200 text-red-800 hover:bg-red-50" onClick={() => restoreTemplate()} />
+              <IconButton icon="restore" label="Restore template" variant="bordered" className="bg-paper-3 border-error text-error hover:bg-error-well" onClick={() => restoreTemplate()} />
             </div>
           )}
           <header>
             <h2 className="text-lg font-semibold">{selected.name}</h2>
-            <p className="text-slate-500 text-sm">
+            <p className="text-muted text-sm">
               {previewReady
                 ? "Draft → approve → publish. Substitutions bind to the published version."
                 : "Set period times and breaks first, then save to open the weekly timetable."}
@@ -843,7 +864,7 @@ export default function TimetablePage() {
           <header className="flex justify-between items-center">
             <div>
               <h3 className="text-base font-semibold">Weekly timetable</h3>
-              <p className="text-slate-500 text-sm">Draft → approve → publish. Substitutions bind to the published version.</p>
+              <p className="text-muted text-sm">Draft → approve → publish. Substitutions bind to the published version.</p>
             </div>
             <div className="flex gap-2">
               <select className="border rounded px-2 py-1 text-sm" value={versionId} onChange={(e) => setVersionId(e.target.value)} disabled={deleted}>
@@ -851,14 +872,14 @@ export default function TimetablePage() {
                   <option key={v.id} value={v.id}>{selected.name} v{v.number} ({v.status})</option>
                 ))}
               </select>
-              <button disabled={deleted} onClick={() => api(`/v1/versions/${versionId}/approve`, { method: "POST" }).then(() => toast("Saved")).catch((e: any) => setErr(e.message))} className="border rounded px-3 py-1 text-sm disabled:opacity-50">Approve</button>
-              <button disabled={deleted} onClick={saveTimetable} className="bg-indigo-600 text-white rounded px-3 py-1 text-sm disabled:opacity-50">Save</button>
-              <button disabled={deleted || !selectedId} onClick={() => runCheck(selectedId)} className="border rounded px-3 py-1 text-sm disabled:opacity-50">Check</button>
+              <button disabled={deleted} onClick={() => api(`/v1/versions/${versionId}/approve`, { method: "POST" }).then(() => toast("Approved this version. You can publish it next.")).catch((e: any) => setErr(e.message))} className="border rounded px-3 py-1 text-sm disabled:opacity-55">Approve</button>
+              <button disabled={deleted} onClick={saveTimetable} className="bg-accent text-accent-ink rounded px-3 py-1 text-sm disabled:opacity-55">Save</button>
+              <button disabled={deleted || !selectedId} onClick={() => runCheck(selectedId)} className="border rounded px-3 py-1 text-sm disabled:opacity-55">Check</button>
               <IconButton icon="view" label="View timetable" variant="bordered" href={`/v1/reports/timetable.html?version_id=${versionId}`} target="_blank" rel="noreferrer" />
               <IconButton icon="print" label="Print" variant="bordered" href={`/v1/reports/timetable.html?version_id=${versionId}`} target="_blank" rel="noreferrer" />
             </div>
           </header>
-          <div className="bg-white border rounded-lg overflow-auto">
+          <div className="bg-paper-3 border rounded-lg overflow-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr>
@@ -871,11 +892,11 @@ export default function TimetablePage() {
                   const teaching = isTeachingPeriod(p);
                   if (!teaching) {
                     return (
-                      <tr key={p.id} className="bg-amber-50">
-                        <td className="p-2 border bg-amber-50 font-medium text-amber-900">{p.name}</td>
+                      <tr key={p.id} className="bg-warn-well">
+                        <td className="p-2 border bg-warn-well font-medium text-warn">{p.name}</td>
                         {grid.days.map((d: any) => (
-                          <td key={d.id} className="p-2 border text-center text-amber-800 italic align-top">
-                            <div className="text-[11px] font-semibold tabular-nums not-italic text-amber-800">
+                          <td key={d.id} className="p-2 border text-center text-warn italic align-top">
+                            <div className="text-xs font-semibold tabular-nums not-italic text-warn">
                               {periodTimeRange(periodOnDay(p, d))}
                             </div>
                             {periodTypeLabel(p.period_type)} · not allocated
@@ -886,16 +907,16 @@ export default function TimetablePage() {
                   }
                   return (
                     <tr key={p.id}>
-                      <td className="p-2 border bg-slate-50">{p.name}</td>
+                      <td className="p-2 border bg-paper-2">{p.name}</td>
                       {grid.days.map((d: any) => (
                         <td key={d.id} className="p-1 border align-top">
                           {periodTimeRange(periodOnDay(p, d)) && (
-                            <div className="text-[10px] font-semibold tabular-nums text-slate-600 mb-0.5">
+                            <div className="text-xs font-semibold tabular-nums text-muted mb-0.5">
                               {periodTimeRange(periodOnDay(p, d))}
                             </div>
                           )}
                           {(cellMap[`${d.id}|${p.id}`] || []).map((a: any) => (
-                            <div key={a.id} className="rounded px-1 mb-1" style={chipStyle(a.color)}>{a.short} {a.section}</div>
+                            <div key={a.id} className="period-card" style={chipStyle(a.color)} title={cardFullTitle(a)}>{cardShortLabel(a)}</div>
                           ))}
                         </td>
                       ))}
