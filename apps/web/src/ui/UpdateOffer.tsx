@@ -28,9 +28,15 @@ export default function UpdateOffer() {
  setErr("");
  try {
  await api("/v1/app/update/install", { method: "POST" }, { busy: false });
+ // Server exits after staging; helper runs msiexec and relaunches the app.
  } catch (e: unknown) {
+ // Process exit can drop the HTTP connection after a successful stage.
+ const msg = e instanceof Error ? e.message : "";
+ if (/failed to fetch|networkerror|load failed|aborted/i.test(msg) || msg === "") {
+ return;
+ }
  setPhase("error");
- setErr(e instanceof Error ? e.message : "The update could not be installed");
+ setErr(msg || "The update could not be installed");
  }
  }
 
@@ -44,10 +50,26 @@ export default function UpdateOffer() {
  An update is available. Version {info.version} replaces this copy ({info.current}). Update closes the app,
  installs the new version, and opens it again. Your timetable files stay in place.
  </p>
- {info.notes ? <p className="text-sm text-ink mt-3 whitespace-pre-wrap">{info.notes}</p> : null}
+ {info.notes ? (
+ <ul className="text-sm text-ink mt-3 max-h-48 overflow-y-auto space-y-1">
+ {info.notes
+ .split("\n")
+ .map((line) => line.trim())
+ .filter(Boolean)
+ .map((line, i) => (
+ <li
+ key={`${i}-${line}`}
+ className={line.startsWith("•") || line.startsWith("-") ? "pl-1" : "font-medium pt-1 first:pt-0"}
+ >
+ {line.replace(/^[-•]\s*/, "• ")}
+ </li>
+ ))}
+ </ul>
+ ) : null}
  {phase === "working" ? (
  <p className="text-sm text-muted mt-3">
- Downloading and checking the update. This window closes when the app is ready to restart.
+ Downloading the update (~65 MB), then a Windows installer window appears. The app closes and
+ reopens on the new version. Keep this window open until that happens.
  </p>
  ) : null}
  {phase === "error" ? <p className="text-sm text-error mt-3">{err}</p> : null}

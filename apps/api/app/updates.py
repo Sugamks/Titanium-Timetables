@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -33,6 +34,53 @@ MSI_NAME = "TitaniumTimetables.msi"
 
 class UpdateError(Exception):
     pass
+
+
+def format_update_notes(raw: str) -> str:
+    """Turn release-please / CHANGELOG markdown into short plain bullets (no hashes/URLs)."""
+    text = (raw or "").replace("\r\n", "\n").strip()
+    if not text:
+        return ""
+
+    if re.search(r"(?m)^##\s+", text):
+        chunks = re.split(r"(?m)^##\s+", text)
+        for chunk in chunks[1:]:
+            if chunk.strip():
+                text = re.sub(r"^[^\n]*\n?", "", chunk, count=1).strip()
+                break
+
+    def link_repl(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        if re.fullmatch(r"[0-9a-f]{7,40}", label, flags=re.I):
+            return ""
+        return label
+
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", link_repl, text)
+    text = re.sub(r"`[^`]+`", "", text)
+    text = re.sub(r"\bhttps?://\S+", "", text)
+    text = re.sub(r"\(([0-9a-f]{7,40})\)", "", text, flags=re.I)
+    text = re.sub(r"\b[0-9a-f]{7,40}\b", "", text, flags=re.I)
+    text = re.sub(r"(?m)^#{1,6}\s*", "", text)
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in text.split("\n"):
+        line = re.sub(r"\s+", " ", raw_line.strip())
+        line = re.sub(r"\s*\(\s*\)\s*", " ", line).strip(" -:\t")
+        if not line:
+            continue
+        if line.lower().startswith("changelog"):
+            continue
+        if re.match(r"^[-*]\s+", line):
+            line = "• " + re.sub(r"^[-*]\s+", "", line).strip(" -")
+        key = line.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(line)
+        if len(lines) >= 24:
+            break
+    return "\n".join(lines)
 
 
 def is_newer(current: str, remote: str) -> bool:
@@ -174,7 +222,7 @@ def release_from_github(payload: dict, current: str) -> dict | None:
     sha = digest.split(":", 1)[1].strip().lower() if digest.lower().startswith("sha256:") else ""
     if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha):
         raise UpdateError("The release file has no checksum")
-    notes = str(payload.get("body") or "")[:4000]
+    notes = format_update_notes(str(payload.get("body") or ""))[:4000]
     return {"version": version, "notes": notes, "url": url, "sha256": sha}
 
 
@@ -232,10 +280,21 @@ def apply_msi_script() -> str:
   [Parameter(Mandatory = $true)][string]$Exe
 )
 $ErrorActionPreference = "Stop"
+$log = Join-Path (Split-Path -Parent $Msi) "msiexec-update.log"
 while (Get-Process -Id $PidToWait -ErrorAction SilentlyContinue) {
   Start-Sleep -Seconds 1
 }
-$proc = Start-Process -FilePath msiexec.exe -ArgumentList @("/i", $Msi, "/qn", "/norestart") -Wait -PassThru
+Get-Process TitaniumTimetables -ErrorAction SilentlyContinue |
+  Where-Object { $_.Id -ne $PidToWait } |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+# Drop leftover silent installs of this same MSI (double-click / prior hung run).
+Get-CimInstance Win32_Process -Filter "Name='msiexec.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Msi*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
+# One ArgumentList string so paths with spaces stay quoted for msiexec.
+$argList = "/i `"$Msi`" /passive /norestart /l*v `"$log`""
+$proc = Start-Process -FilePath msiexec.exe -ArgumentList $argList -Wait -PassThru
 if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { exit $proc.ExitCode }
 if (Test-Path -LiteralPath $Exe) { Start-Process -FilePath $Exe }
 """
@@ -338,25 +397,28 @@ def _iter_download(url: str, user: str, token: str):
         import base64
 
         header = "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
-    with httpx.Client(follow_redirects=False, timeout=120.0) as client:
+    timeout = httpx.Timeout(30.0, read=600.0)
+    with httpx.Client(follow_redirects=False, timeout=timeout) as client:
         for _ in range(6):
             headers = {"User-Agent": "TitaniumTimetables-Updater"}
             host = (urlparse(current).hostname or "").lower()
             if header and host in BITBUCKET_HOSTS:
                 headers["Authorization"] = header
-            response = client.get(current, headers=headers)
-            if response.status_code in (301, 302, 303, 307, 308):
-                location = response.headers.get("location")
-                if not location:
-                    raise UpdateError("The update server sent a redirect without a location")
-                current = urljoin(current, location)
-                if urlparse(current).scheme != "https":
-                    raise UpdateError("Update downloads must use https")
-                continue
-            if response.status_code >= 400:
-                raise UpdateError(f"Update server returned {response.status_code}")
-            yield response.content
-            return
+            with client.stream("GET", current, headers=headers) as response:
+                if response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("location")
+                    if not location:
+                        raise UpdateError("The update server sent a redirect without a location")
+                    current = urljoin(current, location)
+                    if urlparse(current).scheme != "https":
+                        raise UpdateError("Update downloads must use https")
+                    continue
+                if response.status_code >= 400:
+                    raise UpdateError(f"Update server returned {response.status_code}")
+                for chunk in response.iter_bytes(256 * 1024):
+                    if chunk:
+                        yield chunk
+                return
     raise UpdateError("The update server redirected too many times")
 
 
@@ -367,7 +429,7 @@ def _read_release(current: str, manifest_url: str, user: str, token: str, extra_
         raise UpdateError("The update manifest could not be read")
     version = str(data["version"]).strip()
     _version_parts(version)
-    notes = str(data.get("notes") or "")[:4000]
+    notes = format_update_notes(str(data.get("notes") or ""))[:4000]
     url = allowed_download(manifest_url, str(data["url"]), extra_hosts)
     sha = str(data["sha256"]).strip().lower()
     if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha):
