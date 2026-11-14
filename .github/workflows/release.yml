@@ -96,11 +96,54 @@ jobs:
           $version = $match.Matches[0].Groups[1].Value
           $tag = $env:RELEASE_TAG
           if (-not $tag) { $tag = "v$version" }
+
+          # Latest CHANGELOG section only; strip markdown links and commit hashes.
+          $notesPath = "release-notes.md"
+          $out = New-Object System.Collections.Generic.List[string]
+          $seen = @{}
+          $inSection = $false
+          foreach ($line in Get-Content CHANGELOG.md) {
+            if ($line -match '^##\s') {
+              if ($inSection) { break }
+              $inSection = $true
+              continue
+            }
+            if (-not $inSection) { continue }
+            $clean = [regex]::Replace($line, '\[[0-9a-fA-F]{7,40}\]\([^)]+\)', '')
+            $clean = [regex]::Replace($clean, '\[([^\]]+)\]\([^)]+\)', '$1')
+            $clean = [regex]::Replace($clean, '\(([0-9a-fA-F]{7,40})\)', '')
+            $clean = [regex]::Replace($clean, '\b[0-9a-fA-F]{7,40}\b', '')
+            $clean = [regex]::Replace($clean, '\s+', ' ').Trim().TrimEnd('-', ':', ' ')
+            $clean = [regex]::Replace($clean, '\(\s*\)', '').Trim()
+            if (-not $clean) { continue }
+            if ($clean -match '^###\s+(.+)$') {
+              $heading = $Matches[1].Trim()
+              if (-not $seen.ContainsKey($heading.ToLowerInvariant())) {
+                $seen[$heading.ToLowerInvariant()] = $true
+                if ($out.Count -gt 0) { $out.Add('') }
+                $out.Add($heading)
+              }
+              continue
+            }
+            if ($clean -match '^[\*\-]\s+(.+)$') {
+              $item = $Matches[1].Trim().TrimEnd('.')
+              if (-not $item) { continue }
+              $key = $item.ToLowerInvariant()
+              if ($seen.ContainsKey($key)) { continue }
+              $seen[$key] = $true
+              $out.Add("- $item")
+            }
+          }
+          if ($out.Count -eq 0) { $out.Add("Version $version") }
+          Set-Content -Path $notesPath -Value ($out -join "`n") -Encoding utf8
+
           gh release view $tag --json tagName *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag dist/TitaniumTimetables.msi --target $env:RELEASE_SHA --title $version --notes-file CHANGELOG.md
+            gh release create $tag dist/TitaniumTimetables.msi --target $env:RELEASE_SHA --title $version --notes-file $notesPath
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           } else {
             gh release upload $tag dist/TitaniumTimetables.msi --clobber
             if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+            gh release edit $tag --notes-file $notesPath
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit notes failed" }
           }
