@@ -4,6 +4,14 @@ All notable changes to Scheduling Platform are documented in this file.
 
 The version matches `APP_VERSION` in `apps/api/app/version.py` and `version` in `apps/web/package.json`.
 
+## [0.1.5](https://github.com/Sugamks/Titanium-Timetables/compare/v0.1.4...v0.1.5) (2026-11-14)
+
+
+### Features
+
+* ui-enh and bug fixes ([603c73e](https://github.com/Sugamks/Titanium-Timetables/commit/603c73ee1e341f19d42b73aabf03d32a265fe622))
+* ui-enh and bug fixes ([379d1c1](https://github.com/Sugamks/Titanium-Timetables/commit/379d1c1fa0419bcad44fdf4e6d9dce8c7a39c7c8))
+
 ## [0.1.4](https://github.com/Sugamks/Titanium-Timetables/compare/v0.1.3...v0.1.4) (2026-11-01)
 
 
