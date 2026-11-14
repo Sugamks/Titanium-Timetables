@@ -4,6 +4,15 @@ All notable changes to Scheduling Platform are documented in this file.
 
 The version matches `APP_VERSION` in `apps/api/app/version.py` and `version` in `apps/web/package.json`.
 
+## [0.1.6](https://github.com/Sugamks/Titanium-Timetables/compare/v0.1.5...v0.1.6) (2026-11-14)
+
+
+### Bug Fixes
+
+* adding border to user icons ([0f325a7](https://github.com/Sugamks/Titanium-Timetables/commit/0f325a7c3448253ba6084f1241d22e918bc2015c))
+* adding border to user icons ([ebed8f5](https://github.com/Sugamks/Titanium-Timetables/commit/ebed8f5fcb9f4b712df9e79b117455b53ffe8e79))
+* release updater stuck issue ([204194a](https://github.com/Sugamks/Titanium-Timetables/commit/204194ab374d04229df37ce291184e95dc98300b))
+
 ## [0.1.5](https://github.com/Sugamks/Titanium-Timetables/compare/v0.1.4...v0.1.5) (2026-11-14)
 
 
