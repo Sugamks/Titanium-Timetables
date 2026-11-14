@@ -84,6 +84,11 @@ button:active:not(:disabled), a.bg-accent:active { transform: translateY(1px); }
   .app-sidebar-chip:hover { background: var(--app-sidebar-hover); }
 }
 .app-sidebar-icon { color: var(--color-muted); }
+.app-sidebar-avatar {
+  border: 1px solid var(--app-sidebar-border);
+  color: var(--color-ink);
+  background: var(--app-sidebar-control);
+}
 .shell-brand { display: block; }
 .shell-brand img { width: 148px; height: auto; }
 .shell-brand.is-mark img { width: 36px; height: 36px; object-fit: cover; object-position: top center; }
