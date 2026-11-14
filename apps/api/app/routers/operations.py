@@ -11,6 +11,8 @@ from app.services.substitution import (
     apply_leave_window,
     cover_ids,
     ensure_day,
+    free_rooms,
+    month_totals,
     remove_absence,
     score_candidates,
     seed_covers_for_absence,
@@ -19,13 +21,18 @@ from app.services.substitution import (
     set_cover_teachers,
     touch_cover,
     usable_version,
+    weight_config,
 )
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
 
 class AbsenceIn(BaseModel):
-    teacher_id: str
+    teacher_id: str | None = None
+    room_resource_id: str | None = None
+    section_id: str | None = None
+    kind: str = "teacher"
+    reason: str | None = None
     on_date: date
     leave_for: str = "fullday"
     source: str = "adhoc"
@@ -60,6 +67,10 @@ class CoverIn(BaseModel):
     cover_teacher_id: str | None = None
     cover_teacher_ids: list[str] | None = None
     status: str = "covered"
+    cover_type: str | None = None
+    target_period_id: str | None = None
+    joined_section_id: str | None = None
+    cover_room_resource_id: str | None = None
 
 
 class IgnoreIn(BaseModel):
@@ -107,6 +118,10 @@ def list_absences(on_date: date | None = None, db: Session = Depends(get_db), us
             "teacher": r.teacher.resource.name if r.teacher and r.teacher.resource else None,
             "on_date": str(r.on_date),
             "source": r.source,
+            "kind": r.kind or "teacher",
+            "reason": r.reason,
+            "room_resource_id": r.room_resource_id,
+            "section_id": r.section_id,
             "leave_for": r.leave_for,
             "time_in": r.time_in.strftime("%H:%M") if r.time_in else None,
             "time_out": r.time_out.strftime("%H:%M") if r.time_out else None,
@@ -117,14 +132,28 @@ def list_absences(on_date: date | None = None, db: Session = Depends(get_db), us
 
 @router.post("/absences")
 def add_absence(body: AbsenceIn, db: Session = Depends(get_db), user=Depends(require_roles("substitutor"))):
-    teacher = db.get(models.Teacher, body.teacher_id)
-    if not teacher:
-        raise HTTPException(404, "Teacher not found")
-    existing = db.query(models.Absence).filter_by(teacher_id=body.teacher_id, on_date=body.on_date).first()
-    if existing:
-        raise HTTPException(400, "This teacher is already on the substitution list for that date")
+    kind = (body.kind or "teacher").lower()
+    if kind == "teacher":
+        teacher = db.get(models.Teacher, body.teacher_id)
+        if not teacher:
+            raise HTTPException(404, "Teacher not found")
+        existing = db.query(models.Absence).filter_by(teacher_id=body.teacher_id, on_date=body.on_date).first()
+        if existing:
+            raise HTTPException(400, "This teacher is already on the substitution list for that date")
+    elif kind == "room":
+        if not body.room_resource_id:
+            raise HTTPException(400, "Choose a room")
+    elif kind == "section":
+        if not body.section_id or not db.get(models.Section, body.section_id):
+            raise HTTPException(400, "Choose a class")
+    else:
+        raise HTTPException(400, "Kind must be teacher, room, or section")
     row = models.Absence(
-        teacher_id=body.teacher_id,
+        teacher_id=body.teacher_id if kind == "teacher" else None,
+        room_resource_id=body.room_resource_id if kind == "room" else None,
+        section_id=body.section_id if kind == "section" else None,
+        kind=kind,
+        reason=(body.reason or "other") if kind == "teacher" else body.reason,
         on_date=body.on_date,
         leave_for=body.leave_for,
         source=body.source,
@@ -209,6 +238,89 @@ def add_duty(body: DutyIn, db: Session = Depends(get_db), user=Depends(require_r
     return {"id": row.id}
 
 
+@router.delete("/duties/{did}")
+def delete_duty(did: str, db: Session = Depends(get_db), user=Depends(require_roles("substitutor"))):
+    row = db.get(models.Duty, did)
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+
+class WeightIn(BaseModel):
+    same_subject: int = 15
+    teaches_class: int = 8
+    free: int = 25
+    under_cap: int = 10
+    not_exempt: int = 10
+
+
+@router.get("/weights")
+def get_weights(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    row = weight_config(db)
+    db.commit()
+    return {
+        "same_subject": row.same_subject,
+        "teaches_class": row.teaches_class,
+        "free": row.free,
+        "under_cap": row.under_cap,
+        "not_exempt": row.not_exempt,
+    }
+
+
+@router.put("/weights")
+def put_weights(body: WeightIn, db: Session = Depends(get_db), user=Depends(require_roles("substitutor"))):
+    row = weight_config(db)
+    row.same_subject = body.same_subject
+    row.teaches_class = body.teaches_class
+    row.free = body.free
+    row.under_cap = body.under_cap
+    row.not_exempt = body.not_exempt
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/month")
+def month_report(year: int, month: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if month < 1 or month > 12:
+        raise HTTPException(400, "Month must be 1 to 12")
+    return {"year": year, "month": month, "rows": month_totals(db, year, month)}
+
+
+@router.get("/substitutions/{sid}/sheet")
+def day_sheet(sid: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    day = db.get(models.SubstitutionDay, sid)
+    if not day:
+        raise HTTPException(404)
+    payload = serialize_day(db, day)
+    return {
+        "on_date": payload["on_date"],
+        "weekday": payload["weekday"],
+        "covers": [
+            {
+                "period": c.get("period"),
+                "class": c.get("section") or "",
+                "subject": c.get("subject") or "",
+                "absent": c.get("absent_teacher") or "",
+                "cover": ", ".join(c.get("cover_teachers") or []) or c.get("cover_type") or "",
+                "cover_type": c.get("cover_type") or "covered",
+            }
+            for c in payload["covers"]
+        ],
+    }
+
+
+@router.get("/substitutions/{sid}/free-rooms")
+def room_options(sid: str, period_id: str, day_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    day = db.get(models.SubstitutionDay, sid)
+    if not day:
+        raise HTTPException(404)
+    version = db.get(models.TimetableVersion, day.based_on_version_id)
+    if not version:
+        raise HTTPException(404, "Version not found")
+    return free_rooms(db, version, day_id, period_id)
+
+
 @router.get("/day")
 def get_day(
     on_date: date,
@@ -287,6 +399,14 @@ def assign_cover(sid: str, body: CoverIn, db: Session = Depends(get_db), user=De
     cover = _cover_row(db, day, body)
     ids = body.cover_teacher_ids or ([body.cover_teacher_id] if body.cover_teacher_id else [])
     set_cover_teachers(cover, ids)
+    if body.cover_type:
+        cover.cover_type = body.cover_type
+    if body.target_period_id:
+        cover.target_period_id = body.target_period_id
+    if body.joined_section_id:
+        cover.joined_section_id = body.joined_section_id
+    if body.cover_room_resource_id:
+        cover.cover_room_resource_id = body.cover_room_resource_id
     if body.status == "ignored":
         cover.status = "ignored"
         touch_cover(cover, user, "ignored")

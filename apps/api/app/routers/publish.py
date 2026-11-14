@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth import get_current_user, require_roles
 from app.database import get_db
-from app.engine.conflicts import hard_health
-from app.engine.occupancy import allocation_class_fields, lesson_covers_section, lesson_sections
+from app.engine.conflicts import hard_health, teacher_of
+from app.engine.occupancy import allocation_class_fields, lesson_covers_section, lesson_sections, teacher_fields
 from app.services.impact import clone_version
 from app.services.quality import quality_report
-from app.services.audit import actor_label
+from app.services.audit import actor_label, present_audit_reason
 from app.services.institution import institution_name
 from app.services.profile import session_profile
 from app.services.staff_profile import read_profile, write_profile
@@ -140,9 +140,11 @@ def _grid_payload(db: Session, version: models.TimetableVersion, alloc_filter):
                 "short": (les.subject.short_name or les.subject.name) if les and les.subject else "",
                 "color": (les.subject.color if les and les.subject else None) or "#64748b",
                 "section": classes["section"],
+                "section_short": classes["section_short"],
                 "section_ids": classes["section_ids"],
                 "sections": classes["sections"],
-                "teacher": next((lr.resource.name for lr in les.resources if lr.resource and lr.resource.type == "teacher"), None) if les else None,
+                "section_shorts": classes["section_shorts"],
+                **teacher_fields(teacher_of(les) if les else None),
                 "room": rooms.get(a.room_resource_id) or "",
             }
         )
@@ -254,19 +256,69 @@ def my_timetable(
     return payload
 
 
+_AUDIT_KINDS = {
+    "teacher": ("teacher", "teachers"),
+    "class": ("class", "sections"),
+    "subject": ("subject", "subjects"),
+    "lesson": ("lesson", "lessons"),
+    "card": ("lesson_allocation", "designer", "allocations"),
+    "constraint": ("constraint", "constraints"),
+    "template": ("timetable", "timetables"),
+    "bell": ("period", "periods"),
+    "publish": ("timetable_version",),
+}
+
+
+def _audit_bound(value: str | None, end: bool) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if len(text) == 10:
+        day = date.fromisoformat(text)
+        return datetime.combine(day, time.max if end else time.min)
+    parsed = datetime.fromisoformat(text)
+    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
 @router.get("/audit")
-def audit(limit: int = 200, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    rows = db.query(models.ChangeEvent).order_by(models.ChangeEvent.created_at.desc()).limit(limit).all()
-    return [
-        {
-            "id": r.id,
-            "entity": r.entity,
-            "entity_id": r.entity_id,
-            "actor": r.actor,
-            "reason": r.reason,
-            "old_value": r.old_value,
-            "new_value": r.new_value,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
+def audit(
+    limit: int = 200,
+    entity: str | None = None,
+    kind: str | None = None,
+    q: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    limit = max(1, min(limit, 500))
+    query = db.query(models.ChangeEvent)
+    names = _AUDIT_KINDS.get(kind or "")
+    if names:
+        query = query.filter(models.ChangeEvent.entity.in_(names))
+    elif entity:
+        query = query.filter(models.ChangeEvent.entity == entity)
+    if q and q.strip():
+        query = query.filter(models.ChangeEvent.reason.ilike(f"%{q.strip()}%"))
+    start = _audit_bound(since, False)
+    finish = _audit_bound(until, True)
+    if start:
+        query = query.filter(models.ChangeEvent.created_at >= start)
+    if finish:
+        query = query.filter(models.ChangeEvent.created_at <= finish)
+    rows = query.order_by(models.ChangeEvent.created_at.desc()).limit(limit).all()
+    shown = []
+    for r in rows:
+        reason = present_audit_reason(db, r.reason)
+        if not reason:
+            continue
+        shown.append(
+            {
+                "id": r.id,
+                "entity": r.entity,
+                "entity_id": r.entity_id,
+                "reason": reason,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+        )
+    return shown

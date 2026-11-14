@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -24,6 +24,7 @@ from app.engine.occupancy import (
     load_availability,
     occupy_keys,
     slot_availability,
+    teacher_fields,
     teaching_periods,
     valid_starts,
     week_code,
@@ -80,6 +81,8 @@ def _pick_room(lesson: models.Lesson, occupied: set, day_id: str, period_ids: li
     required_type = lesson.required_room_type
     candidates = []
     for room in rooms:
+        if room.resource and room.resource.is_active is False:
+            continue
         if required_type and room.room_type and room.room_type != required_type:
             continue
         keys = occupy_keys({f"room:{room.resource_id}"}, day_id, period_ids, lanes)
@@ -114,9 +117,27 @@ class SolverContext:
         self.var_meta = var_meta
         self.occupy = occupy
         self.penalties = []
+        self.soft_terms = []
+        self.assumptions = []
+        self.room_of = {}
+        self.rooms = []
+        self.periods = []
         self.db = db
         self.teachers = teachers
         self.period_index = {p.id: i for i, p in enumerate(teaching)}
+        self._seq = 0
+
+    def assume(self, label: str):
+        self._seq += 1
+        lit = self.model.NewBoolVar(f"asm{self._seq}")
+        self.model.AddAssumption(lit)
+        self.assumptions.append((lit, label))
+        return lit
+
+    def penalize(self, indicator, weight: int, label: str):
+        w = max(1, int(weight or 1))
+        self.penalties.append(indicator * w)
+        self.soft_terms.append((indicator, w, label))
 
 
 def _generation_context(db: Session, version: models.TimetableVersion) -> dict:
@@ -168,23 +189,60 @@ def greedy_generate(db: Session, version: models.TimetableVersion, rng: random.R
         locked_count[a.lesson_id] += 1
         placements.append(_alloc_dict(a.lesson_id, a.day_id, a.period_id, rid, a.occurrence_index, a.lock_level, les.week_pattern_id, pids, code))
 
+    from app.engine.occupancy import (
+        lesson_blocks,
+        lesson_section_ids,
+        max_cards_per_day,
+        spans_contiguous,
+        subject_section_card_totals,
+    )
+
+    period_idx = {p.id: i for i, p in enumerate(teaching)}
+    class_used = defaultdict(list)
+    lessons_by_id = {row.id: row for row in lessons}
+    subject_day = Counter()
+    for pl in placements:
+        les = lessons_by_id.get(pl["lesson_id"])
+        if not les:
+            continue
+        for sid in lesson_section_ids(les):
+            subject_day[(les.subject_id, sid, pl["day_id"])] += 1
+            for pid in pl.get("period_ids") or []:
+                if pid in period_idx:
+                    class_used[(sid, pl["day_id"])].append(period_idx[pid])
+    bundle_need = subject_section_card_totals(lessons)
+    wanted = set(ctx.get("section_ids") or [])
     starts_by_dur = {}
+    day_count = len(days)
     for lesson in sorted(lessons, key=lambda l: (-(l.priority or 50), -(l.duration_periods or 1), -l.frequency_per_week)):
-        need = lesson.frequency_per_week - locked_count.get(lesson.id, 0)
-        dur = max(1, lesson.duration_periods or 1)
-        starts = starts_by_dur.setdefault(dur, valid_starts(teaching, dur))
+        if wanted and not (set(lesson_section_ids(lesson)) & wanted):
+            continue
+        blocks = lesson_blocks(lesson)
+        placed_n = locked_count.get(lesson.id, 0)
+        pending = blocks[placed_n:]
         code = week_code(lesson.week_pattern)
         lanes = week_lanes(code)
-        occ = locked_count.get(lesson.id, 0)
-        used_days = {p["day_id"] for p in placements if p["lesson_id"] == lesson.id}
-        for _ in range(max(0, need)):
+        occ = placed_n
+        section_ids_here = lesson_section_ids(lesson)
+        max_by_section = {
+            sid: max_cards_per_day(bundle_need.get((lesson.subject_id, sid), 0), day_count)
+            for sid in section_ids_here
+        }
+
+        def day_load(day_id: str) -> int:
+            return max((subject_day[(lesson.subject_id, sid, day_id)] for sid in section_ids_here), default=0)
+
+        for dur in pending:
+            starts = starts_by_dur.setdefault(dur, valid_starts(teaching, dur))
             placed = False
             day_order = list(days)
             rng.shuffle(day_order)
-            day_order.sort(key=lambda d: d.id in used_days)
+            day_order.sort(key=lambda d: day_load(d.id))
             start_order = list(starts)
             rng.shuffle(start_order)
             for day in day_order:
+                if any(subject_day[(lesson.subject_id, sid, day.id)] >= max_by_section[sid] for sid in section_ids_here):
+                    continue
                 for start in start_order:
                     block = duration_block(teaching, start.id, dur)
                     if not block:
@@ -195,6 +253,9 @@ def greedy_generate(db: Session, version: models.TimetableVersion, rng: random.R
                         continue
                     if placement_forbidden(constraints, lesson, day.id, pids):
                         continue
+                    indexes = [period_idx[pid] for pid in pids if pid in period_idx]
+                    if any(not spans_contiguous(class_used[(sid, day.id)] + indexes) for sid in section_ids_here):
+                        continue
                     tokens = exclusive_tokens(lesson, gmap)
                     room = _pick_room(lesson, occupied, day.id, pids, lanes, rooms)
                     if room:
@@ -203,7 +264,9 @@ def greedy_generate(db: Session, version: models.TimetableVersion, rng: random.R
                     if any(k in occupied for k in keys):
                         continue
                     consume(lesson, day.id, pids, lanes, room)
-                    used_days.add(day.id)
+                    for sid in section_ids_here:
+                        class_used[(sid, day.id)].extend(indexes)
+                        subject_day[(lesson.subject_id, sid, day.id)] += 1
                     placements.append(_alloc_dict(lesson.id, day.id, start.id, room, occ, "none", lesson.week_pattern_id, pids, code))
                     occ += 1
                     placed = True
@@ -215,134 +278,10 @@ def greedy_generate(db: Session, version: models.TimetableVersion, rng: random.R
     return placements
 
 
-def ortools_generate(db: Session, version: models.TimetableVersion, time_limit: float = 8.0) -> list[dict] | None:
-    try:
-        from ortools.sat.python import cp_model
-    except ImportError:
-        return None
+def ortools_generate(db: Session, version: models.TimetableVersion, time_limit: float = 8.0, section_ids: list[str] | None = None) -> dict:
+    from app.engine.cpsat_solve import solve_cpsat
 
-    grid = version.timetable.time_grid_id
-    days = db.query(models.Day).filter_by(time_grid_id=grid).order_by(models.Day.sort_order).all()
-    teaching = teaching_periods(db.query(models.Period).filter_by(time_grid_id=grid).order_by(models.Period.sort_order).all())
-    lessons = _lessons_for_version(db, version)
-    if not lessons or not days or not teaching:
-        return []
-    gmap = groups_by_section_map(db)
-    cells = load_availability(db)
-    rooms = db.query(models.Room).all()
-    teachers = db.query(models.Teacher).all()
-    constraints = [c for c in relevant_constraints(db, version) if getattr(c, "enabled", True)]
-
-    model = cp_model.CpModel()
-    x = {}
-    var_meta = {}
-    occupy = defaultdict(list)
-
-    for les in lessons:
-        dur = max(1, les.duration_periods or 1)
-        starts = valid_starts(teaching, dur)
-        code = week_code(les.week_pattern)
-        lanes = week_lanes(code)
-        tokens = exclusive_tokens(les, gmap)
-        for occ in range(les.frequency_per_week):
-            for d in days:
-                for start in starts:
-                    block = duration_block(teaching, start.id, dur)
-                    if not block:
-                        continue
-                    pids = [p.id for p in block]
-                    key = (les.id, occ, d.id, start.id)
-                    var = model.NewBoolVar(f"x_{les.id[:8]}_{occ}_{d.sort_order}_{start.sort_order}")
-                    x[key] = var
-                    var_meta[key] = {"period_ids": pids, "tokens": tokens, "lanes": lanes, "code": code}
-                    state = slot_availability(les, d.id, pids, code, cells)
-                    if state == STATE_UNAVAILABLE:
-                        model.Add(var == 0)
-                    for cell in occupy_keys(tokens, d.id, pids, lanes):
-                        occupy[cell].append(var)
-
-    for les in lessons:
-        starts = valid_starts(teaching, max(1, les.duration_periods or 1))
-        for occ in range(les.frequency_per_week):
-            vars_ = [x[k] for k in x if k[0] == les.id and k[1] == occ]
-            if vars_:
-                model.Add(sum(vars_) == 1)
-
-    for les in lessons:
-        for d in days:
-            for start in teaching:
-                same = [x[k] for k in x if k[0] == les.id and k[2] == d.id and k[3] == start.id]
-                if len(same) > 1:
-                    model.Add(sum(same) <= 1)
-
-    for _cell, vars_ in occupy.items():
-        if len(vars_) > 1:
-            model.Add(sum(vars_) <= 1)
-
-    for a in version.allocations:
-        if a.lock_level == "none":
-            continue
-        les = a.lesson
-        occ = min(a.occurrence_index, max(0, les.frequency_per_week - 1))
-        key = (les.id, occ, a.day_id, a.period_id)
-        if key in x:
-            model.Add(x[key] == 1)
-
-    ctx = SolverContext(model, lessons, days, teaching, x, var_meta, occupy, db, teachers)
-    for c in constraints:
-        get_handler(c.type_code).apply(ctx, c)
-
-    for key, var in x.items():
-        meta = var_meta[key]
-        les = ctx.lesson_map[key[0]]
-        state = slot_availability(les, key[2], meta["period_ids"], meta["code"], cells)
-        if state == STATE_AVOID:
-            ctx.penalties.append(var * 40)
-        elif state == STATE_PREFERRED:
-            ctx.penalties.append((1 - var) * 0)
-            ctx.penalties.append(var * -5 if False else var * 0)
-
-    first_p = teaching[0].id
-    last_p = teaching[-1].id
-    for key, var in x.items():
-        if key[3] == first_p:
-            ctx.penalties.append(var * 2)
-        if key[3] == last_p:
-            ctx.penalties.append(var * 2)
-
-    if ctx.penalties:
-        model.Minimize(sum(ctx.penalties))
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit
-    solver.parameters.num_search_workers = 4
-    status = solver.Solve(model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
-
-    occupied: set = set()
-    placements = []
-    for les in lessons:
-        code = week_code(les.week_pattern)
-        lanes = week_lanes(code)
-        occ_n = 0
-        for occ in range(les.frequency_per_week):
-            for d in days:
-                for start in teaching:
-                    key = (les.id, occ, d.id, start.id)
-                    if key not in x:
-                        continue
-                    if solver.Value(x[key]):
-                        pids = var_meta[key]["period_ids"]
-                        room = _pick_room(les, occupied, d.id, pids, lanes, rooms)
-                        tokens = set(var_meta[key]["tokens"])
-                        if room:
-                            tokens.add(f"room:{room}")
-                        for k in occupy_keys(tokens, d.id, pids, lanes):
-                            occupied.add(k)
-                        placements.append(_alloc_dict(les.id, d.id, start.id, room, occ_n, "none", les.week_pattern_id, pids, code))
-                        occ_n += 1
-    return placements
+    return solve_cpsat(db, version, time_limit=time_limit, section_ids=section_ids)
 
 
 def score_placements(db: Session, version: models.TimetableVersion, placements: list[dict], ctx: dict | None = None) -> dict:
@@ -380,15 +319,34 @@ def score_placements(db: Session, version: models.TimetableVersion, placements: 
         if len(idxs) >= 2:
             gaps += (idxs[-1] - idxs[0] + 1) - len(idxs)
 
+    from app.engine.occupancy import lesson_blocks, lesson_sections, spans_contiguous
+
+    class_day = defaultdict(list)
+    for pl in placements:
+        les = lessons.get(pl["lesson_id"])
+        if not les:
+            continue
+        pids = pl.get("period_ids") or [pl["period_id"]]
+        for section in lesson_sections(les):
+            for pid in pids:
+                class_day[(section.id, pl["day_id"])].append(period_idx.get(pid, 0))
+    student_gaps = 0
+    for idxs in class_day.values():
+        ordered = sorted(set(idxs))
+        if not spans_contiguous(ordered):
+            student_gaps += (ordered[-1] - ordered[0] + 1) - len(ordered)
+
     have = defaultdict(int)
     for pl in placements:
         have[pl["lesson_id"]] += 1
     incomplete = 0
+    incomplete_lessons = 0
     for lid, les in lessons.items():
-        missing = les.frequency_per_week - have[lid]
+        needed = len(lesson_blocks(les)) or int(les.frequency_per_week or 0)
+        missing = max(0, needed - have[lid])
         if missing > 0:
             incomplete += missing
-            hard += missing
+            incomplete_lessons += 1
 
     rooms_used = len({pl.get("room_resource_id") for pl in placements if pl.get("room_resource_id")})
     util = min(100, int(100 * rooms_used / room_count))
@@ -398,11 +356,12 @@ def score_placements(db: Session, version: models.TimetableVersion, placements: 
     return {
         "hard_violations": hard,
         "teacher_gaps": gaps,
-        "student_gaps": 0,
+        "student_gaps": student_gaps,
         "room_utilization": util,
         "preference_score": round(pref, 1),
         "placed": len(placements),
         "incomplete": incomplete,
+        "incomplete_lessons": incomplete_lessons,
     }
 
 
@@ -441,8 +400,7 @@ def preview_placements(db: Session, version: models.TimetableVersion, placements
             "short": (les.subject.short_name if les.subject else "") or "",
             "color": (les.subject.color if les.subject else None) or "#64748b",
             **allocation_view_fields(les),
-            "teacher": t.name if t else "",
-            "teacher_resource_id": t.id if t else None,
+            **teacher_fields(t),
             "room": room.resource.name if room and room.resource else None,
         }
         for offset, pid in enumerate(period_ids):
@@ -506,24 +464,29 @@ def explain_failure(db: Session, version: models.TimetableVersion) -> dict:
     }
 
 
-def run_generate(db: Session, version_id: str, mode: str = "balanced", progress_cb=None) -> dict:
+def run_generate(db: Session, version_id: str, mode: str = "balanced", progress_cb=None, section_ids: list[str] | None = None) -> dict:
     version = db.get(models.TimetableVersion, version_id)
     if not version:
         return {"error": "version not found"}
     if progress_cb:
         progress_cb(8, "Loading classes and constraints")
     ctx = _generation_context(db, version)
+    ctx["section_ids"] = list(section_ids or [])
 
     solutions = []
     labels = ["A", "B", "C", "D"]
     seeds = [7, 21, 99, 123]
-    n = 3 if mode == "fast" else 4
-    use_or = mode == "best"
+    # fast: 2 greedy. balanced: OR-Tools + 2 greedy. best: longer OR-Tools + 3 greedy.
+    n = 2 if mode == "fast" else (3 if mode == "best" else 2)
+    use_or = mode != "fast"
+    or_limit = 4.0 if mode == "best" else 2.0
 
+    solved = {}
     if use_or:
         if progress_cb:
-            progress_cb(15, "Searching solution A (best)")
-        placed = ortools_generate(db, version, time_limit=6.0)
+            progress_cb(15, "Searching solution A")
+        solved = ortools_generate(db, version, time_limit=or_limit, section_ids=section_ids)
+        placed = solved.get("placements")
         if placed:
             metrics = score_placements(db, version, placed, ctx)
             solutions.append(
@@ -532,16 +495,24 @@ def run_generate(db: Session, version_id: str, mode: str = "balanced", progress_
                     "score": metrics["preference_score"],
                     "metrics": metrics,
                     "allocations": placed,
-                    "explanation": {"engine": "ortools"},
+                    "explanation": {
+                        "engine": "ortools",
+                        "broken": solved.get("broken") or [],
+                        "preflight": (solved.get("preflight") or [])[:8],
+                        "blocked_rules": solved.get("blocked_rules") or [],
+                    },
                 }
             )
             labels = labels[1:]
             seeds = seeds[1:]
             n = min(n, len(seeds))
+        elif solved.get("infeasible"):
+            # OR-Tools proved no full solution; still try a few greedy drafts for a partial week.
+            n = min(n, 2)
 
     for i in range(n):
         if progress_cb:
-            progress_cb(20 + i * 18, f"Searching solution {labels[i]}")
+            progress_cb(20 + i * 25, f"Searching solution {labels[i]}")
         placed = greedy_generate(db, version, random.Random(seeds[i]), ctx)
         metrics = score_placements(db, version, placed, ctx)
         solutions.append(
@@ -554,19 +525,70 @@ def run_generate(db: Session, version_id: str, mode: str = "balanced", progress_
             }
         )
 
-    solutions.sort(key=lambda s: (-s["score"], s["metrics"]["hard_violations"], -s["metrics"]["placed"]))
+    solutions.sort(
+        key=lambda s: (
+            -s["score"],
+            s["metrics"]["hard_violations"],
+            s["metrics"].get("incomplete_lessons") or s["metrics"].get("incomplete") or 0,
+            -s["metrics"]["placed"],
+        )
+    )
     if progress_cb:
         progress_cb(95, "Scoring")
-    if all(s["metrics"]["hard_violations"] > 0 for s in solutions):
+    tight = (solved.get("preflight") or [])[:8]
+    blocked = list(solved.get("blocked_rules") or [])
+    has_clash = bool(solutions) and all(s["metrics"]["hard_violations"] > 0 for s in solutions)
+    all_empty = bool(solutions) and all(not s.get("allocations") for s in solutions)
+    if has_clash or blocked or all_empty:
         fail = explain_failure(db, version)
+        if blocked and all_empty:
+            fail["summary"] = "Generation is impossible under these rules: " + "; ".join(blocked[:8])
+        elif blocked:
+            # OR-Tools could not place everything; greedy drafts still exist — do not scream "impossible".
+            fail["summary"] = ""
+        fail["blocked_rules"] = blocked
+        fail["preflight"] = tight
         for s in solutions:
             extra = s.get("explanation") or {}
-            s["explanation"] = {**extra, **fail}
+            if has_clash or all_empty:
+                s["explanation"] = {**extra, **fail, "preflight": extra.get("preflight") or tight, "summary": fail.get("summary") or extra.get("summary")}
+            else:
+                s["explanation"] = {
+                    **extra,
+                    "blocked_rules": blocked,
+                    "preflight": extra.get("preflight") or tight,
+                }
+        if not solutions and blocked:
+            solutions.append(
+                {
+                    "label": "A",
+                    "score": 0,
+                    "metrics": {
+                        "hard_violations": 0,
+                        "teacher_gaps": 0,
+                        "student_gaps": 0,
+                        "preference_score": 0,
+                        "placed": 0,
+                        "incomplete": 0,
+                        "incomplete_lessons": 0,
+                    },
+                    "allocations": [],
+                    "explanation": fail,
+                }
+            )
     return {"solutions": solutions}
 
 
-def apply_allocations(db: Session, version: models.TimetableVersion, placements: list[dict], actor: str, reason: str):
-    kept = [a for a in list(version.allocations) if a.lock_level != "none"]
+def apply_allocations(
+    db: Session,
+    version: models.TimetableVersion,
+    placements: list[dict],
+    actor: str,
+    reason: str,
+    pinned_lesson_ids: set[str] | None = None,
+):
+    pinned = pinned_lesson_ids or set()
+    kept = [a for a in list(version.allocations) if a.lock_level != "none" or a.lesson_id in pinned]
     kept_keys = {(a.lesson_id, a.occurrence_index) for a in kept}
     for a in list(version.allocations):
         if a.lock_level == "none":

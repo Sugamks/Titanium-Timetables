@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { chipStyle } from "../ui/colors";
+import { cardFullTitle, cardShortLabel } from "../ui/lessonMarks";
 import { isTeachingPeriod, periodOnDay, periodTimeRange, periodTypeLabel } from "../periods";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
 import SearchSelect from "../ui/SearchSelect";
-import { chipStyle } from "../ui/colors";
-
 export default function MyTimetablePage() {
  const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
  const [teacherId, setTeacherId] = useState("");
@@ -49,9 +49,9 @@ export default function MyTimetablePage() {
  <h1 className="text-2xl font-semibold">My timetable</h1>
  <PageHelp page="mine" />
  </div>
- <p className="text-slate-500 text-sm mt-1">Published week for one teacher.</p>
+ <p className="text-muted text-sm mt-1">Published week for one teacher.</p>
  </header>
- <div className="bg-white border rounded-lg p-3 w-64">
+ <div className="bg-paper-3 border rounded-lg p-3 w-64">
  <SearchSelect
  label="Teacher"
  value={teacherId}
@@ -60,31 +60,31 @@ export default function MyTimetablePage() {
  placeholder="Select teacher"
  />
  </div>
- {!teacherId && <div className="bg-white border rounded-lg p-8 text-center text-sm text-slate-500">Add a teacher on the School tab first.</div>}
- {teacherId && !data && <div className="text-slate-500">Loading timetable…</div>}
+ {!teacherId && <div className="bg-paper-3 border rounded-lg p-8 text-center text-sm text-muted">Add a teacher on the School tab first.</div>}
+ {teacherId && !data && <div className="text-muted">Loading timetable…</div>}
  {data && !data.ok && (
- <div className="bg-white border rounded-lg p-8 text-center text-sm text-slate-500">
+ <div className="bg-paper-3 border rounded-lg p-8 text-center text-sm text-muted">
  {data.error || "No published timetable yet."}
  </div>
  )}
  {data?.ok && (
- <section className="bg-white border rounded-lg overflow-auto">
+ <section className="bg-paper-3 border rounded-lg overflow-auto">
  <table className="w-full text-xs border-collapse">
  <thead>
  <tr>
- <th className="p-2 border bg-slate-50">Period</th>
+ <th className="p-2 border bg-paper-2">Period</th>
  {days.map((d: any) => (
- <th key={d.id} className="p-2 border bg-slate-50">{d.name}</th>
+ <th key={d.id} className="p-2 border bg-paper-2">{d.name}</th>
  ))}
  </tr>
  </thead>
  <tbody>
  {periods.map((p: any) => (
- <tr key={p.id} className={!isTeachingPeriod(p) ? "bg-amber-50" : ""}>
- <td className="p-2 border font-medium bg-slate-50">{p.name}</td>
+ <tr key={p.id} className={!isTeachingPeriod(p) ? "bg-warn-well" : ""}>
+ <td className="p-2 border font-medium bg-paper-2">{p.name}</td>
  {!isTeachingPeriod(p) ? (
  days.map((d: any) => (
- <td key={d.id} className="p-2 border text-center italic text-amber-800 align-top">
+ <td key={d.id} className="p-2 border text-center italic text-warn align-top">
  <div className="text-xs font-semibold tabular-nums not-italic">{periodTimeRange(periodOnDay(p, d))}</div>
  {periodTypeLabel(p.period_type)}
  </td>
@@ -93,15 +93,12 @@ export default function MyTimetablePage() {
  days.map((d: any) => (
  <td key={d.id} className="p-1 border align-top h-16">
  {periodTimeRange(periodOnDay(p, d)) && (
- <div className="text-xs font-semibold tabular-nums text-slate-500 mb-0.5">
+ <div className="text-xs font-semibold tabular-nums text-muted mb-0.5">
  {periodTimeRange(periodOnDay(p, d))}
  </div>
  )}
  {(cellMap[`${d.id}|${p.id}`] || []).map((c: any, i: number) => (
- <div key={i} className="rounded px-1 py-0.5 mb-0.5" style={chipStyle(c.color)}>
- {c.short || c.subject}
- {c.section ? ` · ${c.section}` : ""}
- </div>
+ <div key={i} className="period-card" style={chipStyle(c.color)} title={cardFullTitle(c)}>{cardShortLabel(c)}</div>
  ))}
  </td>
  ))

@@ -6,6 +6,7 @@ import { DataList, DataPill, DataRow } from "../../ui/DataRow";
 import ErrorBanner from "../../ui/ErrorBanner";
 import { hexColor, nextSubjectColor } from "../../ui/colors";
 import { useToast } from "../../ui/Toast";
+import NeedTemplate, { yearHasTemplate } from "../../ui/NeedTemplate";
 
 function SubjectEditor({
   subject,
@@ -16,13 +17,14 @@ function SubjectEditor({
   subject: any;
   subjects: any[];
   saving: boolean;
-  onSave: (body: { name: string; short_name: string; color: string; category: string }) => Promise<void>;
+  onSave: (body: { name: string; short_name: string; color: string; category: string; is_active: boolean }) => Promise<void>;
 }) {
   const [name, setName] = useState(subject.name || "");
   const [short, setShort] = useState(subject.short_name || "");
   const [shortTouched, setShortTouched] = useState(Boolean(subject.short_name));
   const [color, setColor] = useState(hexColor(subject.color));
   const [category, setCategory] = useState(subject.category || "other");
+  const [active, setActive] = useState(subject.is_active !== false);
 
   function nextShort(value: string) {
     const words = value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
@@ -37,7 +39,7 @@ function SubjectEditor({
       className="grid grid-cols-[minmax(0,1fr)_6rem_auto] gap-2 items-end"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ name, short_name: short, color, category });
+        onSave({ name, short_name: short, color, category, is_active: active });
       }}
     >
       <Field label="Subject">
@@ -76,7 +78,13 @@ function SubjectEditor({
           placeholder="Type"
         />
       </div>
-      <button disabled={saving} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+      <Field label="Status">
+        <select className={`${inputClass} h-10`} value={active ? "active" : "inactive"} onChange={(e) => setActive(e.target.value === "active")}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </Field>
+      <button disabled={saving} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
         Save
       </button>
     </form>
@@ -141,8 +149,9 @@ export default function CatalogPanel({
         category: "other",
       });
       setShortTouched(false);
+      const subjectName = subject.name.trim();
       await onChanged();
-      toast("Saved");
+      toast(`Added subject “${subjectName}”.`);
     } catch (err: any) {
       setSubjectError(err.message);
     } finally {
@@ -150,12 +159,14 @@ export default function CatalogPanel({
     }
   }
 
+  if (!yearHasTemplate(catalog?.timetables, yearId)) return <NeedTemplate what="Subjects" />;
+
   return (
     <div className="h-full min-h-0">
-      <section className="bg-white border rounded-xl p-4 shadow-sm flex flex-col min-h-0 overflow-hidden">
+      <section className="bg-paper-3 border rounded-xl p-4 flex flex-col min-h-0 overflow-hidden">
         <h2 className="font-semibold">Subjects</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-3">
-          Subjects are global — one English for the whole school. Different teachers or templates are lessons, not new subjects.
+        <p className="text-xs text-muted mt-1 mb-3">
+          Subjects are global. One English for the whole school. Different teachers or templates are lessons, not new subjects.
         </p>
         <form onSubmit={addSubject} className="flex gap-2 items-end">
           <div className="w-full max-w-md min-w-0">
@@ -215,7 +226,7 @@ export default function CatalogPanel({
           </div>
           <div className="shrink-0">
             <Field label={"\u00a0"}>
-              <button disabled={saving === "subject"} className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50">
+              <button disabled={saving === "subject"} className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55">
                 Add
               </button>
             </Field>
@@ -229,7 +240,12 @@ export default function CatalogPanel({
               name={s.name}
               short={s.short_name}
               color={hexColor(s.color)}
-              badge={<DataPill>{categoryLabel(s.category)}</DataPill>}
+              badge={
+                <>
+                  <DataPill>{categoryLabel(s.category)}</DataPill>
+                  {s.is_active === false ? <DataPill>Inactive</DataPill> : null}
+                </>
+              }
               deleteLabel="Delete subject"
               open={openSubjectId === s.id}
               onToggle={() => setOpenSubjectId((id) => (id === s.id ? "" : s.id))}
@@ -244,7 +260,7 @@ export default function CatalogPanel({
                     try {
                       await api(`/v1/subjects/${s.id}`, { method: "PATCH", body: JSON.stringify(body) });
                       await onChanged();
-                      toast("Saved");
+                      toast(`Saved subject “${body.name || s.name}”.`);
                     } catch (err: any) {
                       setSubjectError(err.message);
                     } finally {
@@ -259,7 +275,7 @@ export default function CatalogPanel({
                   await api(`/v1/subjects/${s.id}`, { method: "DELETE" });
                   if (openSubjectId === s.id) setOpenSubjectId("");
                   await onChanged();
-                  toast("Saved");
+                  toast(`Removed subject “${s.name}”.`);
                 } catch (err: any) {
                   setSubjectError(err.message);
                 }

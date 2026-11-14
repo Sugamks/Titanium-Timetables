@@ -8,8 +8,14 @@ from app import models
 CATALOG = [
     ("TeacherUnavailable", "Teacher unavailable", "availability", "hard"),
     ("RoomUnavailable", "Room unavailable", "availability", "hard"),
+    ("SubjectUnavailable", "Subject unavailable", "availability", "hard"),
     ("ClassUnavailable", "Class unavailable", "availability", "hard"),
     ("MaxTeacherLessonsPerDay", "Max teacher lessons per day", "load", "soft"),
+    ("MaxDaysPerWeek", "Max days per week", "load", "soft"),
+    ("MinLessonsPerDay", "Min lessons per day", "load", "soft"),
+    ("LunchBreak", "Lunch break", "load", "soft"),
+    ("StartAfter", "Start after period", "load", "soft"),
+    ("EndBefore", "End before period", "load", "soft"),
     ("MaxConsecutiveLessons", "Max consecutive lessons", "load", "soft"),
     ("MaxTeacherWindows", "Max teacher windows", "load", "soft"),
     ("MinTeacherWindows", "Min teacher windows", "load", "soft"),
@@ -18,6 +24,9 @@ CATALOG = [
     ("PreferredDay", "Preferred day", "placement", "soft"),
     ("PreferredRoom", "Preferred room", "placement", "soft"),
     ("SameRoom", "Same room", "placement", "soft"),
+    ("SameRoomAllWeek", "Same room all week", "placement", "soft"),
+    ("MinRoomTypeUses", "At least N in a room type", "placement", "soft"),
+    ("MaxRoomTypeUses", "At most N in a room type", "placement", "soft"),
     ("DifferentRoom", "Different room", "placement", "soft"),
     ("LessonsTogether", "Lessons together", "relationship", "soft"),
     ("LessonsApart", "Lessons apart", "relationship", "soft"),
@@ -76,9 +85,12 @@ def seed_catalog(db: Session) -> None:
     for code, name, cat, sev in CATALOG:
         if code not in existing:
             db.add(models.ConstraintType(code=code, name=name, category=cat, default_severity=sev))
-    for code, name in (("ALL", "Every week"), ("WEEK_A", "Week A"), ("WEEK_B", "Week B")):
-        if not db.query(models.WeekPattern).filter_by(code=code).first():
+    for code, name in (("ALL", "Every week"), ("WEEK_A", "Odd week"), ("WEEK_B", "Even week")):
+        row = db.query(models.WeekPattern).filter_by(code=code).first()
+        if not row:
             db.add(models.WeekPattern(code=code, name=name))
+        elif code in ("WEEK_A", "WEEK_B") and row.name != name:
+            row.name = name
     db.commit()
 
 

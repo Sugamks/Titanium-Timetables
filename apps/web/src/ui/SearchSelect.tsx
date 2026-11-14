@@ -6,16 +6,16 @@ import { dmyToIso, isoToDmy } from "./dates";
 export type SelectOption = { value: string; label: string; short?: string };
 
 const field =
- "w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-left hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400";
+ "w-full border border-rule rounded-xl px-3 py-2 text-sm bg-paper-3 text-left hover:border-rule focus:ring-2 focus:ring-accent focus:border-accent";
 
 const fieldCompact =
- "w-full min-w-0 border border-transparent hover:border-slate-200 rounded-lg px-2 py-1 text-sm bg-white text-left focus:outline-none focus:ring-2 focus:ring-indigo-500";
+ "w-full min-w-0 border border-transparent hover:border-rule rounded-xl px-2 py-1 text-sm bg-paper-3 text-left focus:ring-2 focus:ring-accent";
 
 const fieldCompactFit =
- "w-auto max-w-none border border-transparent hover:border-slate-200 rounded-lg px-2 py-1 text-sm bg-white text-left focus:outline-none focus:ring-2 focus:ring-indigo-500";
+ "w-auto max-w-none border border-transparent hover:border-rule rounded-xl px-2 py-1 text-sm bg-paper-3 text-left focus:ring-2 focus:ring-accent";
 
 const rowBtn =
- "w-full min-w-0 flex items-center gap-1 text-left px-3 py-1.5 hover:bg-indigo-50";
+ "w-full min-w-0 flex items-center gap-1 text-left px-3 py-1.5 hover:bg-paper-2";
 
 const oneLine = "block min-w-0 truncate whitespace-nowrap";
 
@@ -89,7 +89,7 @@ function OptionText({ o }: { o: SelectOption }) {
  return (
  <>
  <span className={oneLine}>{o.label}</span>
- {o.short ? <span className="shrink-0 text-xs text-slate-400">{o.short}</span> : null}
+ {o.short ? <span className="shrink-0 text-xs text-muted">{o.short}</span> : null}
  </>
  );
 }
@@ -106,7 +106,7 @@ function Menu({
  return createPortal(
  <ul
  ref={menuRef}
- className="fixed z-[80] overflow-auto bg-white border border-slate-200 rounded-lg shadow-lg py-1"
+ className="pop-in fixed z-[80] overflow-auto bg-paper-3 border border-rule rounded-lg py-1"
  style={{
  top: pos.flip ? undefined : pos.top,
  bottom: pos.flip ? window.innerHeight - pos.top : undefined,
@@ -158,19 +158,19 @@ export default function SearchSelect({
 
  return (
  <div className={`text-sm ${fit ? "w-max max-w-none" : "min-w-0"}`} ref={wrap}>
- {label ? <div className="font-medium text-slate-700">{label}</div> : null}
- {hint && <p className="text-xs text-slate-500 mt-0.5 leading-snug">{hint}</p>}
+ {label ? <div className="font-medium text-ink">{label}</div> : null}
+ {hint && <p className="text-xs text-muted mt-0.5 leading-snug">{hint}</p>}
  <div className={label || hint ? "mt-1" : ""}>
  {open ? (
  <input
  ref={inputRef}
- className={`${box} ring-2 ring-indigo-100 border-indigo-400`}
+ className={`${box} ring-2 ring-accent border-accent`}
  placeholder={placeholder}
  value={q}
  onChange={(e) => setQ(e.target.value)}
  onKeyDown={(e) => {
  if (e.key === "Escape") setOpen(false);
- if (e.key === "Enter") {
+ if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
  e.preventDefault();
  if (allowEmpty && !q.trim()) pick("");
  else if (filtered[0]) pick(filtered[0].value);
@@ -180,7 +180,7 @@ export default function SearchSelect({
  ) : (
  <button type="button" className={`${box} ${fit ? "" : "overflow-hidden"}`} onClick={() => setOpen(true)}>
  <span
- className={`${labelClass} ${selected || (allowEmpty && !value) ? "text-slate-900" : "text-slate-400"}`}
+ className={`${labelClass} ${selected || (allowEmpty && !value) ? "text-ink" : "text-muted"}`}
  title={selected?.label || ""}
  >
  {selected?.label || (allowEmpty ? emptyLabel : placeholder)}
@@ -191,7 +191,7 @@ export default function SearchSelect({
  <Menu menuRef={menuRef} pos={pos}>
  {allowEmpty && (
  <li>
- <button type="button" className={`${rowBtn} text-slate-500 hover:bg-slate-50`} onClick={() => pick("")}>
+ <button type="button" className={`${rowBtn} text-muted hover:bg-paper-2`} onClick={() => pick("")}>
  <span className={oneLine}>{emptyLabel}</span>
  </button>
  </li>
@@ -201,14 +201,14 @@ export default function SearchSelect({
  <button
  type="button"
  title={o.short ? `${o.label} (${o.short})` : o.label}
- className={`${rowBtn} ${o.value === value ? "bg-indigo-50 text-indigo-800 font-medium" : "text-slate-800"}`}
+ className={`${rowBtn} ${o.value === value ? "bg-paper-2 text-accent font-medium" : "text-ink"}`}
  onClick={() => pick(o.value)}
  >
  <OptionText o={o} />
  </button>
  </li>
  ))}
- {filtered.length === 0 && q.trim() ? <li className="px-3 py-2 text-slate-400">No matches</li> : null}
+ {filtered.length === 0 && q.trim() ? <li className="px-3 py-2 text-muted">No matches</li> : null}
  </Menu>
  )}
  </div>
@@ -250,19 +250,19 @@ export function MultiSearchSelect({
 
  return (
  <div className="text-sm min-w-0" ref={wrap}>
- {label ? <div className="font-medium text-slate-700">{label}</div> : null}
- {hint && <p className="text-xs text-slate-500 mt-0.5 leading-snug">{hint}</p>}
+ {label ? <div className="font-medium text-ink">{label}</div> : null}
+ {hint && <p className="text-xs text-muted mt-0.5 leading-snug">{hint}</p>}
  <div className={label || hint ? "mt-1" : ""}>
  {open ? (
  <input
  ref={inputRef}
- className={`${box} ring-2 ring-indigo-100 border-indigo-400`}
+ className={`${box} ring-2 ring-accent border-accent`}
  placeholder={placeholder}
  value={q}
  onChange={(e) => setQ(e.target.value)}
  onKeyDown={(e) => {
  if (e.key === "Escape") setOpen(false);
- if (e.key === "Enter") {
+ if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
  e.preventDefault();
  if (filtered[0]) toggle(filtered[0].value);
  }
@@ -270,7 +270,7 @@ export function MultiSearchSelect({
  />
  ) : (
  <button type="button" className={`${box} overflow-hidden`} onClick={() => setOpen(true)}>
- <span className={`${oneLine} ${selected.length ? "text-slate-900" : "text-slate-400"}`} title={summary}>
+ <span className={`${oneLine} ${selected.length ? "text-ink" : "text-muted"}`} title={summary}>
  {summary}
  </span>
  </button>
@@ -284,7 +284,7 @@ export function MultiSearchSelect({
  <button
  type="button"
  title={o.short ? `${o.label} (${o.short})` : o.label}
- className={`${rowBtn} ${on ? "bg-indigo-50 text-indigo-800 font-medium" : "text-slate-800"}`}
+ className={`${rowBtn} ${on ? "bg-paper-2 text-accent font-medium" : "text-ink"}`}
  onClick={() => toggle(o.value)}
  >
  <span className="w-4 shrink-0 text-center">{on ? "✓" : ""}</span>
@@ -293,7 +293,7 @@ export function MultiSearchSelect({
  </li>
  );
  })}
- {filtered.length === 0 && q.trim() ? <li className="px-3 py-2 text-slate-400">No matches</li> : null}
+ {filtered.length === 0 && q.trim() ? <li className="px-3 py-2 text-muted">No matches</li> : null}
  </Menu>
  )}
  </div>
@@ -312,8 +312,8 @@ export function Field({
 }) {
  return (
  <label className="text-sm block min-w-0">
- <span className="font-medium text-slate-700">{label}</span>
- {hint && <span className="block text-xs text-slate-500 mt-0.5 leading-snug">{hint}</span>}
+ <span className="font-medium text-ink">{label}</span>
+ {hint && <span className="block text-xs text-muted mt-0.5 leading-snug">{hint}</span>}
  <div className="mt-1">{children}</div>
  </label>
  );
@@ -351,7 +351,7 @@ export function DateInput({
  }}
  onBlur={() => setText(isoToDmy(value))}
  />
- <span className="pointer-events-none absolute inset-y-0 right-0 w-9 flex items-center justify-center text-slate-400">
+ <span className="pointer-events-none absolute inset-y-0 right-0 w-9 flex items-center justify-center text-muted">
  <CalendarIcon className="w-4 h-4" />
  </span>
  <input

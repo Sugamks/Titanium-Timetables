@@ -50,8 +50,8 @@ export default function GeneratePage() {
         <h1 className="flex items-center gap-2">Generate</h1>
         <p className="text-2xl font-semibold">Background OR-Tools / greedy search. Compare scored solutions, then apply to a new draft.</p>
       </header>
-      <div className="text-slate-500 text-sm">
-        <label className="bg-white border rounded-lg p-4 flex flex-wrap gap-3 items-end">Version
+      <div className="text-muted text-sm">
+        <label className="bg-paper-3 border rounded-lg p-4 flex flex-wrap gap-3 items-end">Version
           <select className="text-sm" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
             {tts.flatMap((t) => t.versions.map((v: any) => <option key={v.id} value={v.id}>{t.name} v{v.number}</option>))}
           </select>
@@ -60,18 +60,18 @@ export default function GeneratePage() {
           <label key={m} className="mt-1 block border rounded px-2 py-1"><input type="radio" checked={mode === m} onChange={() => setMode(m)} /> {m}</label>
         ))}
         <button onClick={run} className="text-sm">Generate</button>
-        <button onClick={() => api("/v1/repair", { method: "POST", body: JSON.stringify({ version_id: versionId, mode }) }).then((r: any) => poll(r.job_id))} className="bg-indigo-600 text-white rounded px-4 py-2 text-sm">Local repair</button>
+        <button onClick={() => api("/v1/repair", { method: "POST", body: JSON.stringify({ version_id: versionId, mode }) }).then((r: any) => poll(r.job_id))} className="bg-accent text-accent-ink rounded px-4 py-2 text-sm">Local repair</button>
       </div>
       {job && (
         <div className="border rounded px-4 py-2 text-sm">
-          <div className="bg-white border rounded-lg p-4">{job.message || job.status} — {job.progress}%</div>
-          <div className="text-sm"><div className="h-2 bg-slate-100 rounded mt-2" style={{ width: `${job.progress}%` }} /></div>
-          {job.best_score != null && <div className="h-2 bg-indigo-500 rounded">Best score {job.best_score}</div>}
+          <div className="bg-paper-3 border rounded-lg p-4">{job.message || job.status}: {job.progress}%</div>
+          <div className="text-sm"><div className="h-2 bg-paper-2 rounded mt-2" style={{ width: `${job.progress}%` }} /></div>
+          {job.best_score != null && <div className="h-2 bg-accent rounded">Best score {job.best_score}</div>}
         </div>
       )}
       {err && <p className="text-sm mt-2">{err}</p>}
       {solutions[0]?.explanation?.summary && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm">
+        <div className="bg-warn-well border border-warn rounded-lg p-4 text-sm">
           <div className="font-medium">Why generation struggled</div>
           <p>{solutions[0].explanation.summary}</p>
           <ul className="list-disc ml-5 mt-2">
@@ -80,8 +80,8 @@ export default function GeneratePage() {
         </div>
       )}
       {solutions.length > 0 && (
-        <table className="w-full bg-white border rounded-lg text-sm">
-          <thead className="bg-slate-50">
+        <table className="w-full bg-paper-3 border rounded-lg text-sm">
+          <thead className="bg-paper-2">
             <tr>
               <th className="p-2">Sol</th>
               <th className="p-2">Score</th>
@@ -97,7 +97,7 @@ export default function GeneratePage() {
                 <td className="p-2">{s.score}</td>
                 <td className="p-2">{s.metrics?.hard_violations}</td>
                 <td className="p-2">{s.metrics?.teacher_gaps}</td>
-                <td className="p-2"><button className="text-indigo-600" onClick={() => apply(s.id)}>Apply as new draft</button></td>
+                <td className="p-2"><button className="text-accent" onClick={() => apply(s.id)}>Apply as new draft</button></td>
               </tr>
             ))}
           </tbody>

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.engine.conflicts import teacher_of
-from app.engine.occupancy import allocation_class_fields, duration_block, teaching_periods
+from app.engine.occupancy import allocation_class_fields, duration_block, teacher_fields, teaching_periods
 
 
 def _latest_version(db: Session, version_id: str | None = None, academic_year_id: str | None = None):
@@ -50,8 +50,10 @@ def _alloc_rows(db: Session, v: models.TimetableVersion) -> tuple[list[dict], li
             "short": (les.subject.short_name or les.subject.name) if les.subject else "",
             "color": (les.subject.color if les.subject else None) or "#64748b",
             "section": classes["section"],
+            "section_short": classes["section_short"],
             "sections": classes["sections"],
-            "teacher": t.name if t else "",
+            "section_shorts": classes["section_shorts"],
+            **teacher_fields(t),
             "room": rooms.get(a.room_resource_id) or "",
         }
         for pid in period_ids:
@@ -78,7 +80,9 @@ def _group_cards(rows: list[dict], key: str) -> list[dict]:
                     "subject": row["subject"],
                     "short": row["short"],
                     "section": row["section"],
+                    "section_short": row.get("section_short") or "",
                     "teacher": row["teacher"],
+                    "teacher_short": row.get("teacher_short") or "",
                     "room": row["room"],
                     "color": row["color"],
                 }

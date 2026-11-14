@@ -35,22 +35,22 @@ export default function UpdateOffer() {
  }
 
  return (
- <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/45 p-4">
- <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5" role="dialog" aria-labelledby="update-title">
+ <div className="fixed inset-0 z-[80] flex items-center justify-center scrim p-4">
+ <div className="pop-in bg-paper-3 rounded-xl border border-rule max-w-md w-full p-5" role="dialog" aria-labelledby="update-title">
  <h2 id="update-title" className="text-lg font-semibold">
  Update available
  </h2>
- <p className="text-sm text-slate-600 mt-2">
+ <p className="text-sm text-muted mt-2">
  An update is available. Version {info.version} replaces this copy ({info.current}). Update closes the app,
  installs the new version, and opens it again. Your timetable files stay in place.
  </p>
- {info.notes ? <p className="text-sm text-slate-700 mt-3 whitespace-pre-wrap">{info.notes}</p> : null}
+ {info.notes ? <p className="text-sm text-ink mt-3 whitespace-pre-wrap">{info.notes}</p> : null}
  {phase === "working" ? (
- <p className="text-sm text-slate-500 mt-3">
+ <p className="text-sm text-muted mt-3">
  Downloading and checking the update. This window closes when the app is ready to restart.
  </p>
  ) : null}
- {phase === "error" ? <p className="text-sm text-red-600 mt-3">{err}</p> : null}
+ {phase === "error" ? <p className="text-sm text-error mt-3">{err}</p> : null}
  <div className="mt-4 flex justify-end gap-2">
  <button
  type="button"
@@ -62,7 +62,7 @@ export default function UpdateOffer() {
  </button>
  <button
  type="button"
- className="bg-slate-900 text-white rounded-md px-3 py-1.5 text-sm disabled:opacity-50"
+ className="bg-ink text-accent-ink rounded-md px-3 py-1.5 text-sm disabled:opacity-55"
  onClick={install}
  disabled={phase === "working"}
  >

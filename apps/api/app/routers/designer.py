@@ -26,6 +26,7 @@ from app.engine.occupancy import (
     load_availability,
     occupy_keys,
     slot_availability,
+    teacher_fields,
     teaching_periods,
     valid_starts,
     week_code,
@@ -78,6 +79,22 @@ class LockIn(BaseModel):
     lock_level: str
 
 
+def _require_draft(db: Session, version_id: str) -> models.TimetableVersion:
+    version = db.get(models.TimetableVersion, version_id)
+    if not version:
+        raise HTTPException(404, "Version not found")
+    if (version.status or "") in ("published", "archived"):
+        raise HTTPException(400, "This week is published. Open a draft to change it.")
+    return version
+
+
+def _card_label(db: Session, lesson_id: str | None) -> str:
+    lesson = db.get(models.Lesson, lesson_id) if lesson_id else None
+    if lesson and lesson.subject and lesson.subject.name:
+        return lesson.subject.name
+    return "a card"
+
+
 @router.get("/versions/{version_id}")
 def version_grid(version_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
     v = db.get(models.TimetableVersion, version_id)
@@ -104,6 +121,7 @@ def version_grid(version_id: str, db: Session = Depends(get_db), user=Depends(ge
             "period_ids": period_ids,
             "duration_periods": dur,
             "week_pattern_id": a.week_pattern_id,
+            "week_code": week_code(les.week_pattern) if les else "ALL",
             "room_resource_id": a.room_resource_id,
             "occurrence_index": a.occurrence_index,
             "lock_level": a.lock_level,
@@ -111,8 +129,7 @@ def version_grid(version_id: str, db: Session = Depends(get_db), user=Depends(ge
             "short": les.subject.short_name if les.subject else "",
             "color": les.subject.color if les.subject else "#64748b",
             **allocation_view_fields(les),
-            "teacher": t.name if t else "",
-            "teacher_resource_id": t.id if t else None,
+            **teacher_fields(t),
             "room": next((r.resource.name for r in db.query(models.Room).all() if r.resource_id == a.room_resource_id), None),
         }
         for offset, pid in enumerate(period_ids):
@@ -162,6 +179,7 @@ def _conflict_http(issues: list) -> HTTPException:
 def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
     if body.allocation_id and str(body.allocation_id).startswith("preview-"):
         raise HTTPException(400, "This is a preview. Click Use this timetable, then you can swap periods.")
+    _require_draft(db, body.version_id)
     incoming = db.get(models.Lesson, body.lesson_id)
     slot_allocs = (
         db.query(models.LessonAllocation)
@@ -205,19 +223,25 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
         a = db.get(models.LessonAllocation, body.allocation_id)
         if not a:
             raise HTTPException(400, "That lesson is not on the saved timetable yet. Click Use this timetable, then swap.")
+        if a.lock_level == "full":
+            raise HTTPException(400, "This card is locked. Unlock it before moving it.")
         old = {"day_id": a.day_id, "period_id": a.period_id}
         if occupant:
+            if occupant.lock_level == "full":
+                raise HTTPException(400, "This card is locked. Unlock it before moving it.")
             occupant.day_id, occupant.period_id = a.day_id, a.period_id
         a.day_id = body.day_id
         a.period_id = body.period_id
         a.room_resource_id = body.room_resource_id or a.room_resource_id
-        a.lock_level = body.lock_level
+        if body.lock_level in ("lesson", "full"):
+            a.lock_level = body.lock_level
+        label = _card_label(db, a.lesson_id)
         db.add(
             models.ChangeEvent(
                 entity="lesson_allocation",
                 entity_id=a.id,
                 actor=actor_label(user),
-                reason="swap" if occupant else "move",
+                reason=f"Swapped {label}." if occupant else f"Moved {label}.",
                 old_value=old,
                 new_value={"day_id": body.day_id, "period_id": body.period_id},
             )
@@ -236,7 +260,14 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
         )
         db.add(a)
         db.flush()
-        db.add(models.ChangeEvent(entity="lesson_allocation", entity_id=a.id, actor=actor_label(user), reason="place"))
+        db.add(
+            models.ChangeEvent(
+                entity="lesson_allocation",
+                entity_id=a.id,
+                actor=actor_label(user),
+                reason=f"Placed {_card_label(db, a.lesson_id)}.",
+            )
+        )
     db.commit()
     db.refresh(a)
     return {"id": a.id, "swapped": bool(occupant), "issues": issues}
@@ -247,9 +278,19 @@ def dealloc(aid: str, db: Session = Depends(get_db), user=Depends(require_roles(
     a = db.get(models.LessonAllocation, aid)
     if not a:
         raise HTTPException(404)
+    _require_draft(db, a.version_id)
     if a.lock_level == "full":
-        raise HTTPException(400, "Locked allocation")
-    db.add(models.ChangeEvent(entity="lesson_allocation", entity_id=aid, actor=actor_label(user), reason="dealloc", old_value={"lesson_id": a.lesson_id}))
+        raise HTTPException(400, "This card is locked. Unlock it before removing it.")
+    label = _card_label(db, a.lesson_id)
+    db.add(
+        models.ChangeEvent(
+            entity="lesson_allocation",
+            entity_id=aid,
+            actor=actor_label(user),
+            reason=f"Removed {label} from the week.",
+            old_value={"lesson_id": a.lesson_id},
+        )
+    )
     db.delete(a)
     db.commit()
     return {"ok": True}
@@ -260,13 +301,25 @@ def lock(aid: str, body: LockIn, db: Session = Depends(get_db), user=Depends(req
     a = db.get(models.LessonAllocation, aid)
     if not a:
         raise HTTPException(404)
+    _require_draft(db, a.version_id)
+    if body.lock_level not in ("none", "lesson", "full"):
+        raise HTTPException(400, "Lock must be none, lesson, or full.")
     a.lock_level = body.lock_level
+    label = _card_label(db, a.lesson_id)
+    if body.lock_level == "full":
+        reason = f"Locked {label}. It cannot be moved."
+    elif body.lock_level == "lesson":
+        reason = f"Pinned {label}. Generate will not move it."
+    else:
+        reason = f"Unlocked {label}."
+    db.add(models.ChangeEvent(entity="lesson_allocation", entity_id=a.id, actor=actor_label(user), reason=reason))
     db.commit()
     return {"id": a.id, "lock_level": a.lock_level}
 
 
 @router.post("/cell-group")
 def cell_group(body: CellGroupIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_draft(db, body.version_id)
     try:
         return save_cell_groups(
             db,

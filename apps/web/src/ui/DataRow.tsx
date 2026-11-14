@@ -71,7 +71,11 @@ export function DataRow({
  {onDelete ? <IconButton icon="trash" label={deleteLabel} variant="danger" onClick={onDelete} /> : null}
  </span>
  </div>
- {open && editor ? <div className="min-w-0 pb-3">{editor}</div> : null}
+ {open && editor ? (
+ <div className="row-editor is-open">
+ <div className="row-editor-inner"><div className="min-w-0 pb-3">{editor}</div></div>
+ </div>
+ ) : null}
  </li>
  );
 }

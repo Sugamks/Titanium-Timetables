@@ -22,3 +22,6 @@ startup-error.txt
 
 .DS_Store
 Thumbs.db
+.hallmark/
+.venv/
+.wix/

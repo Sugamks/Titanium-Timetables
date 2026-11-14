@@ -90,21 +90,44 @@ def lesson_covers_section(lesson: models.Lesson, section_id: str) -> bool:
 def allocation_class_fields(lesson: models.Lesson | None) -> dict:
     """All classes on a joined card, not only lesson.section_id (the first class)."""
     if not lesson:
-        return {"section": "", "section_id": None, "section_ids": [], "sections": []}
+        return {
+            "section": "",
+            "section_short": "",
+            "section_id": None,
+            "section_ids": [],
+            "sections": [],
+            "section_shorts": [],
+        }
     secs = lesson_sections(lesson)
     names: list[str] = []
+    shorts: list[str] = []
     ids: list[str] = []
     for s in secs:
         ids.append(s.id)
         name = s.resource.name if s.resource else None
+        short = (s.short_name or "").strip() or (name or "")
         if name and name not in names:
             names.append(name)
+            shorts.append(short)
+        elif not name and short and short not in shorts:
+            shorts.append(short)
     return {
         "section": ", ".join(names),
+        "section_short": " + ".join(shorts) if len(shorts) > 1 else (shorts[0] if shorts else ""),
         "section_id": ids[0] if ids else lesson.section_id,
         "section_ids": ids,
         "sections": names,
+        "section_shorts": shorts,
     }
+
+
+def teacher_fields(resource: models.Resource | None) -> dict:
+    if not resource:
+        return {"teacher": "", "teacher_short": "", "teacher_resource_id": None}
+    name = resource.name or ""
+    teacher = getattr(resource, "teacher", None)
+    short = ((teacher.short_name if teacher else None) or "").strip() or name
+    return {"teacher": name, "teacher_short": short, "teacher_resource_id": resource.id}
 
 
 def lesson_band(lesson: models.Lesson | None):
@@ -145,6 +168,57 @@ def lesson_teachers(lesson: models.Lesson) -> list[models.Resource]:
 
 def lesson_rooms(lesson: models.Lesson) -> list[models.Resource]:
     return [lr.resource for lr in lesson.resources if lr.resource and lr.resource.type == "room" and lr.role == "required"]
+
+
+def lesson_blocks(lesson) -> list[int]:
+    """Each entry is one card.  [2, 1, 1, 1] is a double plus three singles."""
+    raw = getattr(lesson, "blocks", None) or []
+    if isinstance(raw, list) and raw:
+        blocks = []
+        for item in raw:
+            try:
+                n = int(item)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                blocks.append(n)
+        if blocks:
+            return blocks
+    dur = max(1, int(getattr(lesson, "duration_periods", None) or 1))
+    freq = max(0, int(getattr(lesson, "frequency_per_week", None) or 0))
+    return [dur] * freq
+
+
+def max_cards_per_day(needed: int, day_count: int) -> int:
+    """At most one card per day when weekly cards fit the week. Over-days only when needed > days."""
+    if day_count <= 0:
+        return max(1, int(needed or 1))
+    need = max(0, int(needed or 0))
+    if need <= day_count:
+        return 1
+    return (need + day_count - 1) // day_count
+
+
+def subject_section_card_totals(lessons) -> dict[tuple[str, str], int]:
+    """Weekly cards per (subject_id, section_id), summing split shares (e.g. Dance 2+3 → 5)."""
+    from collections import defaultdict
+
+    totals: dict[tuple[str, str], int] = defaultdict(int)
+    for les in lessons:
+        n = len(lesson_blocks(les))
+        subj = getattr(les, "subject_id", None)
+        if not subj:
+            continue
+        for sid in lesson_section_ids(les):
+            totals[(subj, sid)] += n
+    return totals
+
+
+def spans_contiguous(indexes: list[int]) -> bool:
+    if len(indexes) <= 1:
+        return True
+    ordered = sorted(set(indexes))
+    return ordered[-1] - ordered[0] + 1 == len(ordered)
 
 
 def exclusive_tokens(lesson: models.Lesson, groups_by_section: dict[str, list[models.StudentGroup]] | None = None) -> set[str]:

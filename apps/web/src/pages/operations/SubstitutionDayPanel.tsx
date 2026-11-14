@@ -26,6 +26,7 @@ type Cover = {
  updated_by?: string;
  action_note?: string;
  action?: string;
+ cover_type?: string;
 };
 
 type Period = {
@@ -104,6 +105,8 @@ export default function SubstitutionDayPanel({
  templateId,
  onTemplate,
  teachers,
+ rooms = [],
+ sections = [],
  day,
  onChanged,
  onError,
@@ -115,6 +118,8 @@ export default function SubstitutionDayPanel({
  templateId: string;
  onTemplate: (v: string) => void;
  teachers: { id: string; name: string }[];
+ rooms?: { id: string; name: string }[];
+ sections?: { id: string; name: string }[];
  day: DayPayload | null;
  onChanged: () => Promise<void> | void;
  onError: (m: string) => void;
@@ -123,6 +128,9 @@ export default function SubstitutionDayPanel({
  const [selectedId, setSelectedId] = useState("");
  const [showAdhoc, setShowAdhoc] = useState(false);
  const [assignCover, setAssignCover] = useState<Cover | null>(null);
+ const [coverType, setCoverType] = useState("covered");
+ const [targetPeriodId, setTargetPeriodId] = useState("");
+ const [joinedSectionId, setJoinedSectionId] = useState("");
  const [candidates, setCandidates] = useState<Candidate[]>([]);
  const [picked, setPicked] = useState<string[]>([]);
  const [showBusy, setShowBusy] = useState(false);
@@ -205,7 +213,10 @@ export default function SubstitutionDayPanel({
  body: JSON.stringify({
  cover_id: assignCover.id,
  cover_teacher_ids: ids,
- status: "covered",
+ status: coverType === "cancelled" ? "ignored" : "covered",
+ cover_type: coverType,
+ target_period_id: coverType === "moved" ? targetPeriodId || null : null,
+ joined_section_id: coverType === "joined" ? joinedSectionId || null : null,
  }),
  });
  setPicked(ids);
@@ -295,7 +306,7 @@ export default function SubstitutionDayPanel({
 
  return (
  <div className="space-y-4">
- <div className="bg-white border rounded-lg p-4 flex flex-wrap items-end justify-between gap-3">
+ <div className="bg-paper-3 border rounded-lg p-4 flex flex-wrap items-end justify-between gap-3">
  <div className="flex flex-wrap items-end gap-3">
  <div className="w-56 shrink-0">
  <SearchSelect
@@ -310,12 +321,20 @@ export default function SubstitutionDayPanel({
  <DateInput value={date} onChange={onDate} />
  </Field>
  {day && (
- <div className="text-sm text-slate-500 pb-2">
- <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-medium ${day.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-500"}`}>
+ <div className="text-sm text-muted pb-2">
+ <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-medium ${day.status === "published" ? "bg-success-well text-success" : "bg-paper-2 text-muted"}`}>
  {day.status === "published" ? "Published" : "Draft"}
  </span>
  <span className="ml-2">{day.weekday}</span>
- {day.teaching_day ? <span className="ml-2">{day.pending} pending · {day.done} covered · {day.ignored} ignored</span> : <span className="ml-2 text-amber-700">No teaching day in the template</span>}
+ <button type="button" className="ml-3 underline" onClick={async () => {
+ const sheet = await api<any>(`/v1/operations/substitutions/${day.id}/sheet`);
+ const win = window.open("", "_blank");
+ if (!win) return;
+ const rows = (sheet.covers || []).map((c: any) => `<tr><td>${c.period}</td><td>${c.class}</td><td>${c.subject}</td><td>${c.absent}</td><td>${c.cover}</td><td>${c.cover_type}</td></tr>`).join("");
+ win.document.write(`<h1>${sheet.weekday} ${sheet.on_date}</h1><table border="1" cellpadding="6"><tr><th>Period</th><th>Class</th><th>Subject</th><th>Absent</th><th>Cover</th><th>Type</th></tr>${rows}</table>`);
+ win.print();
+ }}>Print day</button>
+ {day.teaching_day ? <span className="ml-2">{day.pending} pending, {day.done} covered, {day.ignored} ignored</span> : <span className="ml-2 text-warn">No teaching day in the template</span>}
  </div>
  )}
  </div>
@@ -325,7 +344,7 @@ export default function SubstitutionDayPanel({
  </button>
  <button
  type="button"
- className="bg-indigo-600 text-white text-white rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+ className="bg-accent text-accent-ink text-accent-ink rounded-lg px-3 py-2 text-sm disabled:opacity-55"
  disabled={!day || busy === "publish"}
  onClick={publish}
  >
@@ -334,13 +353,13 @@ export default function SubstitutionDayPanel({
  </div>
  </div>
 
- {!day && <p className="text-sm text-slate-500">Publish or save a timetable first, then open this date.</p>}
+ {!day && <p className="text-sm text-muted">Publish or save a timetable first, then open this date.</p>}
 
  {day && (
  <div className={`grid gap-4 items-start ${assignCover ? "xl:grid-cols-[13rem_1fr_22rem]" : "xl:grid-cols-[13rem_1fr]"}`}>
- <aside className="bg-white border rounded-lg overflow-hidden">
- <div className="px-3 py-2 text-xs text-slate-500 border-b">Absentees</div>
- {day.absentees.length === 0 && <p className="px-3 py-6 text-sm text-slate-500">None for this template</p>}
+ <aside className="bg-paper-3 border rounded-lg overflow-hidden">
+ <div className="px-3 py-2 text-xs text-muted border-b">Absentees</div>
+ {day.absentees.length === 0 && <p className="px-3 py-6 text-sm text-muted">None for this template</p>}
  {day.absentees.map((a) => (
  <div
  key={a.teacher_id}
@@ -348,13 +367,13 @@ export default function SubstitutionDayPanel({
  tabIndex={0}
  onClick={() => { setSelectedId(a.teacher_id); setAssignCover(null); }}
  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedId(a.teacher_id); }}
- className={`w-full text-left px-3 py-2 border-b last:border-b-0 cursor-pointer ${selected?.teacher_id === a.teacher_id ? "bg-slate-50" : "hover:bg-slate-50"}`}
+ className={`w-full text-left px-3 py-2 border-b last:border-b-0 cursor-pointer ${selected?.teacher_id === a.teacher_id ? "bg-paper-2" : "hover:bg-paper-2"}`}
  >
  <div className="flex items-start justify-between gap-2">
  <div className="min-w-0">
  <div className="font-medium truncate">{a.teacher}</div>
- <div className="text-xs text-slate-500">
- {sourceLabel(a.source)} · {a.time_in}–{a.time_out}
+ <div className="text-xs text-muted">
+ {sourceLabel(a.source)}, {a.time_in} to {a.time_out}
  </div>
  </div>
  {a.absence_id && (
@@ -362,46 +381,47 @@ export default function SubstitutionDayPanel({
  )}
  </div>
  <div className="mt-1 flex gap-1 text-xs">
- <span className="px-1.5 rounded bg-amber-50 text-amber-700">{a.pending} pending</span>
- <span className="px-1.5 rounded bg-emerald-50 text-emerald-700">{a.done} done</span>
- {a.ignored > 0 && <span className="px-1.5 rounded bg-slate-50 text-slate-500">{a.ignored} ignored</span>}
+ <span className="px-1.5 rounded bg-warn-well text-warn">{a.pending} pending</span>
+ <span className="px-1.5 rounded bg-success-well text-success">{a.done} done</span>
+ {a.ignored > 0 && <span className="px-1.5 rounded bg-paper-2 text-muted">{a.ignored} ignored</span>}
  </div>
  </div>
  ))}
  </aside>
 
- <section className="bg-white border rounded-lg p-3 min-h-[20rem] overflow-auto">
+ <section className="bg-paper-3 border rounded-lg p-3 min-h-[20rem] overflow-auto">
  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
  <div>
  <h2 className="font-medium">{view === "teacher" ? (selected?.teacher || "Select an absentee") : `${day.weekday} · all classes`}</h2>
- <p className="text-xs text-slate-500">
+ <p className="text-xs text-muted">
  {view === "teacher"
  ? "Click a period on their day o assign a free teacher."
  : "Click a highlighted period (absent teacher) o assign cover."}
  </p>
  </div>
  <div className="flex rounded-lg border p-0.5 text-xs">
- <button type="button" className={`px-2.5 py-1 rounded-lg ${view === "teacher" ? "bg-indigo-600 text-white text-white" : "text-slate-500"}`} onClick={() => setView("teacher")}>
+ <button type="button" className={`px-2.5 py-1 rounded-lg ${view === "teacher" ? "bg-accent text-accent-ink text-accent-ink" : "text-muted"}`} onClick={() => setView("teacher")}>
  Teacher day
  </button>
- <button type="button" className={`px-2.5 py-1 rounded-lg ${view === "school" ? "bg-indigo-600 text-white text-white" : "text-slate-500"}`} onClick={() => setView("school")}>
+ <button type="button" className={`px-2.5 py-1 rounded-lg ${view === "school" ? "bg-accent text-accent-ink text-accent-ink" : "text-muted"}`} onClick={() => setView("school")}>
  School day
  </button>
  </div>
  </div>
 
- {view === "teacher" && !selected && <p className="text-sm text-slate-500">Select an absentee.</p>}
+ <div key={view} className="motion-swap">
+ {view === "teacher" && !selected && <p className="text-sm text-muted">Select an absentee.</p>}
  {view === "teacher" && selected && periods.length === 0 && (
- <p className="text-sm text-slate-500">{day.teaching_day ? "No periods on this template." : `${day.weekday} is not a teaching day.`}</p>
+ <p className="text-sm text-muted">{day.teaching_day ? "No periods on this template." : `${day.weekday} is not a teaching day.`}</p>
  )}
  {view === "teacher" && selected && periods.length > 0 && (
  <table className="w-full text-xs border-collapse min-w-[36rem]">
  <thead>
  <tr>
  {periods.map((p) => (
- <th key={p.id} className="p-1.5 border bg-slate-50 font-medium">
+ <th key={p.id} className="p-1.5 border bg-paper-2 font-medium">
  <div>{p.name}</div>
- {p.start_time && <div className="text-xs text-slate-500 font-normal">{p.start_time}{p.end_time ? `–${p.end_time}` : ""}</div>}
+ {p.start_time && <div className="text-xs text-muted font-normal">{p.start_time}{p.end_time ? `–${p.end_time}` : ""}</div>}
  </th>
  ))}
  </tr>
@@ -411,14 +431,14 @@ export default function SubstitutionDayPanel({
  {periods.map((p) => {
  if (!isTeachingPeriod(p)) {
  return (
- <td key={p.id} className="p-2 border bg-amber-50 text-center italic text-amber-800">
+ <td key={p.id} className="p-2 border bg-warn-well text-center italic text-warn">
  {periodTypeLabel(p.period_type)}
  </td>
  );
  }
  const c = coverByPeriod[p.id];
  if (!c) {
- return <td key={p.id} className="p-2 border bg-slate-50/60 text-slate-300 text-center">Free</td>;
+ return <td key={p.id} className="p-2 border bg-paper-2 text-muted text-center">Free</td>;
  }
  const covered = c.status !== "ignored" && (c.cover_teacher_ids || []).length > 0;
  const selectedCell = assignCover?.id === c.id;
@@ -427,7 +447,7 @@ export default function SubstitutionDayPanel({
  <button
  type="button"
  onClick={() => openAssign(c)}
- className={`w-full text-left rounded-lg px-1.5 py-1.5 min-h-[4.5rem] ${selectedCell ? "ring-2 ring-indigo-600 ring-offset-1" : ""}`}
+ className={`w-full text-left rounded-lg px-1.5 py-1.5 min-h-[4.5rem] ${selectedCell ? "ring-2 ring-accent ring-offset-1" : ""}`}
  style={{ ...chipStyle(c.color), opacity: c.status === "ignored" ? 0.45 : 1 }}
  >
  <div className="font-semibold leading-tight">{c.short || c.subject}</div>
@@ -439,12 +459,12 @@ export default function SubstitutionDayPanel({
  {whenLabel(c.updated_at) ? <div className="opacity-80">{whenLabel(c.updated_at)}</div> : null}
  </div>
  ) : covered ? (
- <div className="mt-1 text-xs bg-white/20 rounded px-1 py-0.5 leading-tight">
+ <div className="mt-1 text-xs bg-paper-3 rounded px-1 py-0.5 leading-tight">
  {c.cover_teachers.join(", ")}
  {whenLabel(c.updated_at) ? <div>{whenLabel(c.updated_at)}</div> : null}
  </div>
  ) : (
- <div className="mt-1 text-xs bg-amber-400/90 text-amber-950 rounded px-1 py-0.5">Needs cover</div>
+ <div className="mt-1 text-xs bg-warn-well text-ink rounded px-1 py-0.5">Needs cover</div>
  )}
  </button>
  </td>
@@ -459,19 +479,19 @@ export default function SubstitutionDayPanel({
  <table className="w-full text-xs border-collapse min-w-[40rem]">
  <thead>
  <tr>
- <th className="p-1.5 border bg-slate-50 text-left sticky left-0">Class</th>
+ <th className="p-1.5 border bg-paper-2 text-left sticky left-0">Class</th>
  {periods.map((p) => (
- <th key={p.id} className="p-1.5 border bg-slate-50">{p.name}</th>
+ <th key={p.id} className="p-1.5 border bg-paper-2">{p.name}</th>
  ))}
  </tr>
  </thead>
  <tbody>
  {(day.day_grid || []).map((row) => (
  <tr key={row.section_id}>
- <td className="p-1.5 border font-medium bg-slate-50 sticky left-0 whitespace-nowrap">{row.section}</td>
+ <td className="p-1.5 border font-medium bg-paper-2 sticky left-0 whitespace-nowrap">{row.section}</td>
  {periods.map((p) => {
  if (!isTeachingPeriod(p)) {
- return <td key={p.id} className="p-1 border bg-amber-50" />;
+ return <td key={p.id} className="p-1 border bg-warn-well" />;
  }
  const cell = row.cells?.[p.id];
  if (!cell) return <td key={p.id} className="p-1 border" />;
@@ -485,20 +505,20 @@ export default function SubstitutionDayPanel({
  type="button"
  disabled={!cover}
  onClick={() => cover && openAssign(cover)}
- className={`w-full text-left rounded px-1 py-1 min-h-[3.5rem] disabled:cursor-default ${selectedCell ? "ring-2 ring-indigo-600" : ""} ${cover ? "" : "opacity-80"}`}
+ className={`w-full text-left rounded px-1 py-1 min-h-[3.5rem] disabled:cursor-default ${selectedCell ? "ring-2 ring-accent" : ""} ${cover ? "" : "opacity-80"}`}
  style={chipStyle(cell.color)}
  >
  <div className="font-semibold">{cell.short || cell.subject}</div>
  <div className="opacity-90 truncate">{cover ? cell.absent_teacher : cell.teacher}</div>
  {cover?.status === "ignored" ? (
- <div className="text-xs">No substitute{whenLabel(cover.updated_at) ? ` · ${whenLabel(cover.updated_at)}` : ""}</div>
+ <div className="text-xs">No substitute{whenLabel(cover.updated_at) ? `, ${whenLabel(cover.updated_at)}` : ""}</div>
  ) : cover && (cover.cover_teachers || []).length ? (
- <div className="text-xs bg-white/20 rounded px-1">
- → {cover.cover_teachers.join(", ")}
- {whenLabel(cover.updated_at) ? ` · ${whenLabel(cover.updated_at)}` : ""}
+ <div className="text-xs bg-paper-3 rounded px-1">
+ {cover.cover_teachers.join(", ")}{cover.cover_type && cover.cover_type !== "covered" ? `, ${cover.cover_type}` : ""}
+ {whenLabel(cover.updated_at) ? `, ${whenLabel(cover.updated_at)}` : ""}
  </div>
  ) : cover ? (
- <div className="text-xs bg-amber-400/90 text-amber-950 rounded px-1">Needs cover</div>
+ <div className="text-xs bg-warn-well text-ink rounded px-1">Needs cover</div>
  ) : null}
  </button>
  </td>
@@ -509,22 +529,23 @@ export default function SubstitutionDayPanel({
  </tbody>
  </table>
  )}
+ </div>
  </section>
 
  {assignCover && (
- <aside className="bg-white border rounded-lg overflow-hidden sticky top-4 max-h-[calc(100vh-8rem)] flex flex-col">
+ <aside className="bg-paper-3 border rounded-lg overflow-hidden sticky top-4 max-h-[calc(100vh-8rem)] flex flex-col">
  <div className="px-3 py-2 border-b flex items-start justify-between gap-2 shrink-0">
  <div>
  <div className="font-medium text-sm">{assignCover.period} · {assignCover.short || assignCover.subject}</div>
- <div className="text-xs text-slate-500">{assignCover.section}</div>
+ <div className="text-xs text-muted">{assignCover.section}</div>
  {assignCover.status === "ignored" && (
- <p className="text-xs text-slate-500 mt-1">
+ <p className="text-xs text-muted mt-1">
  No substitute{assignCover.action_note ? ` · ${assignCover.action_note}` : ""}.
  {whenLabel(assignCover.updated_at) ? ` ${whenLabel(assignCover.updated_at)}` : ""}
  </p>
  )}
  {assignCover.status !== "ignored" && (assignCover.cover_teachers || []).length > 0 && (
- <p className="text-xs text-emerald-700 mt-1">
+ <p className="text-xs text-success mt-1">
  {assignCover.cover_teachers.join(", ")}
  {whenLabel(assignCover.updated_at) ? ` · ${whenLabel(assignCover.updated_at)}` : ""}
  </p>
@@ -533,6 +554,26 @@ export default function SubstitutionDayPanel({
  <IconButton icon="close" label="Close" onClick={() => { setAssignCover(null); setCandidates([]); }} />
  </div>
  <div className="px-3 py-2 border-b shrink-0 space-y-2">
+ <select className="w-full border rounded-lg px-2 py-1.5 text-sm" value={coverType} onChange={(e) => setCoverType(e.target.value)}>
+ <option value="covered">Covered</option>
+ <option value="cancelled">Cancelled</option>
+ <option value="joined">Joined to another class</option>
+ <option value="moved">Moved to another period</option>
+ <option value="split">Split</option>
+ <option value="supervision">Supervision only</option>
+ </select>
+ {coverType === "moved" && (
+ <select className="w-full border rounded-lg px-2 py-1.5 text-sm" value={targetPeriodId} onChange={(e) => setTargetPeriodId(e.target.value)}>
+ <option value="">Move to period</option>
+ {(day?.periods || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+ </select>
+ )}
+ {coverType === "joined" && (
+ <select className="w-full border rounded-lg px-2 py-1.5 text-sm" value={joinedSectionId} onChange={(e) => setJoinedSectionId(e.target.value)}>
+ <option value="">Join class</option>
+ {sections.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+ </select>
+ )}
  <input
  className="w-full border rounded-lg px-2.5 py-1.5 text-sm"
  placeholder="Search staff…"
@@ -552,13 +593,13 @@ export default function SubstitutionDayPanel({
  key={id}
  type="button"
  onClick={() => setFocus(id)}
- className={`text-xs px-2 py-1 rounded-lg border ${focus === id ? "bg-indigo-600 text-white text-white border-indigo-600" : "bg-white text-slate-500"}`}
+ className={`text-xs px-2 py-1 rounded-lg border ${focus === id ? "bg-accent text-accent-ink text-accent-ink border-accent" : "bg-paper-3 text-muted"}`}
  >
  {label}
  </button>
  ))}
  </div>
- <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+ <div className="flex flex-wrap gap-3 text-xs text-muted">
  <label className="flex items-center gap-1">
  <input type="checkbox" checked={showBusy} onChange={(e) => setShowBusy(e.target.checked)} />
  Include busy
@@ -576,18 +617,18 @@ export default function SubstitutionDayPanel({
  </div>
  </div>
  <div className="overflow-auto flex-1">
- {loadingCandidates && <p className="px-3 py-4 text-sm text-slate-500">Finding free staff…</p>}
+ {loadingCandidates && <p className="px-3 py-4 text-sm text-muted">Finding free staff…</p>}
  {!loadingCandidates && focus === "suggested" && suggested.length === 0 && (
- <div className="px-3 py-4 text-sm text-slate-500">
+ <div className="px-3 py-4 text-sm text-muted">
  No free teacher of this subject or class.
- <button type="button" className="block mt-2 text-slate-900" onClick={() => setFocus("all")}>
+ <button type="button" className="block mt-2 text-ink" onClick={() => setFocus("all")}>
  Show {freeCount} other free staff
  </button>
  </div>
  )}
  {suggested.length > 0 && (
  <section className="px-3 py-2">
- <h3 className="text-xs text-slate-500 mb-1.5">Best match</h3>
+ <h3 className="text-xs text-muted mb-1.5">Best match</h3>
  <div className="space-y-1.5">
  {suggested.map((c) => (
  <CandidateRow key={c.teacher_id} c={c} picked={picked} busy={busy === "assign"} onPick={clickCandidate} />
@@ -597,7 +638,7 @@ export default function SubstitutionDayPanel({
  )}
  {otherFree.length > 0 && (
  <section className="px-3 py-2 border-t">
- <h3 className="text-xs text-slate-500 mb-1.5">Other free staff</h3>
+ <h3 className="text-xs text-muted mb-1.5">Other free staff</h3>
  <div className="space-y-1.5">
  {otherFree.map((c) => (
  <CandidateRow key={c.teacher_id} c={c} picked={picked} busy={busy === "assign"} onPick={clickCandidate} compact />
@@ -607,7 +648,7 @@ export default function SubstitutionDayPanel({
  )}
  {busyStaff.length > 0 && (
  <section className="px-3 py-2 border-t">
- <h3 className="text-xs text-slate-500 mb-1.5">Busy this period</h3>
+ <h3 className="text-xs text-muted mb-1.5">Busy this period</h3>
  <div className="space-y-1.5">
  {busyStaff.map((c) => (
  <CandidateRow key={c.teacher_id} c={c} picked={picked} busy={busy === "assign"} onPick={clickCandidate} compact />
@@ -625,6 +666,8 @@ export default function SubstitutionDayPanel({
  <AdhocModal
  date={date}
  teachers={teachers}
+ rooms={rooms}
+ sections={sections}
  existingIds={(day?.absentees || []).map((a) => a.teacher_id)}
  onClose={() => setShowAdhoc(false)}
  onError={onError}
@@ -665,7 +708,7 @@ function CandidateRow({
  type="button"
  disabled={busy}
  onClick={() => onPick(c.teacher_id)}
- className={`w-full text-left rounded-lg border px-2.5 py-2 ${on ? "border-emerald-400 bg-emerald-50" : "border-slate-200 hover:border-slate-400 hover:bg-slate-50/40"} ${c.blocked ? "opacity-60" : ""}`}
+ className={`w-full text-left rounded-lg border px-2.5 py-2 ${on ? "border-success bg-success-well" : "border-rule hover:border-rule hover:bg-paper-2"} ${c.blocked ? "opacity-60" : ""}`}
  >
  <div className="flex items-start justify-between gap-2">
  <div className="min-w-0">
@@ -677,10 +720,10 @@ function CandidateRow({
  key={t}
  className={`text-xs px-1.5 py-0.5 rounded-lg ${
  t === "Free" || t === "Same subject" || t === "This class"
- ? "bg-emerald-100 text-emerald-800"
+ ? "bg-success-well text-success"
  : t === "Busy"
- ? "bg-amber-100 text-amber-800"
- : "bg-slate-50 text-slate-500"
+ ? "bg-warn-well text-warn"
+ : "bg-paper-2 text-muted"
  }`}
  >
  {t}
@@ -689,10 +732,10 @@ function CandidateRow({
  </div>
  )}
  {compact && (
- <div className="text-xs text-slate-500 mt-0.5">{tags.filter((t) => t !== "Free").join(" · ") || "Available"}</div>
+ <div className="text-xs text-muted mt-0.5">{tags.filter((t) => t !== "Free").join(" · ") || "Available"}</div>
  )}
  </div>
- <span className={`shrink-0 text-xs font-medium ${on ? "text-emerald-700" : "text-slate-900"}`}>
+ <span className={`shrink-0 text-xs font-medium ${on ? "text-success" : "text-ink"}`}>
  {on ? "Assigned" : "Use"}
  </span>
  </div>
@@ -703,6 +746,8 @@ function CandidateRow({
 function AdhocModal({
  date,
  teachers,
+ rooms,
+ sections,
  existingIds,
  onClose,
  onSaved,
@@ -710,31 +755,43 @@ function AdhocModal({
 }: {
  date: string;
  teachers: { id: string; name: string }[];
+ rooms: { id: string; name: string }[];
+ sections: { id: string; name: string }[];
  existingIds: string[];
  onClose: () => void;
  onSaved: () => Promise<void> | void;
  onError: (m: string) => void;
 }) {
  const available = teachers.filter((t) => !existingIds.includes(t.id));
+ const [kind, setKind] = useState("teacher");
  const [teacherId, setTeacherId] = useState(available[0]?.id || "");
+ const [roomId, setRoomId] = useState(rooms[0]?.id || "");
+ const [sectionId, setSectionId] = useState(sections[0]?.id || "");
  const [leaveFor, setLeaveFor] = useState("fullday");
  const [timeIn, setTimeIn] = useState("07:30");
  const [timeOut, setTimeOut] = useState("17:00");
+ const [reason, setReason] = useState("sick");
  const [saving, setSaving] = useState(false);
 
  async function save() {
- if (!teacherId) return;
+ if (kind === "teacher" && !teacherId) return;
+ if (kind === "room" && !roomId) return;
+ if (kind === "section" && !sectionId) return;
  setSaving(true);
  try {
  await api("/v1/operations/absences", {
  method: "POST",
  body: JSON.stringify({
- teacher_id: teacherId,
+ kind,
+ teacher_id: kind === "teacher" ? teacherId : null,
+ room_resource_id: kind === "room" ? roomId : null,
+ section_id: kind === "section" ? sectionId : null,
  on_date: date,
  leave_for: leaveFor,
  source: "adhoc",
  time_in: leaveFor === "custom" ? timeIn : null,
  time_out: leaveFor === "custom" ? timeOut : null,
+ reason,
  }),
  });
  await onSaved();
@@ -746,18 +803,41 @@ function AdhocModal({
  }
 
  return (
- <div className="fixed inset-0 z-40 bg-indigo-600 text-white/40 flex items-center justify-center p-4" onClick={onClose}>
- <div className="bg-white rounded-lg shadow-none w-full max-w-md p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+ <div className="fixed inset-0 z-40 scrim flex items-center justify-center p-4" onClick={onClose}>
+ <div className="bg-paper-3 rounded-lg shadow-none w-full max-w-md p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
  <div className="flex items-center justify-between">
  <h3 className="font-medium">Add absence</h3>
  <IconButton icon="close" label="Close" onClick={onClose} />
  </div>
+ <Field label="Who is absent">
+ <select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value)}>
+ <option value="teacher">Teacher</option>
+ <option value="room">Room</option>
+ <option value="section">Class</option>
+ </select>
+ </Field>
+ {kind === "teacher" && (
  <SearchSelect
  label="Teacher"
  value={teacherId}
  onChange={setTeacherId}
  options={available.map((t) => ({ value: t.id, label: t.name }))}
  />
+ )}
+ {kind === "room" && (
+ <SearchSelect label="Room" value={roomId} onChange={setRoomId} options={rooms.map((r) => ({ value: r.id, label: r.name }))} />
+ )}
+ {kind === "section" && (
+ <SearchSelect label="Class" value={sectionId} onChange={setSectionId} options={sections.map((s) => ({ value: s.id, label: s.name }))} />
+ )}
+ <Field label="Reason">
+ <select className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)}>
+ <option value="sick">Sick</option>
+ <option value="duty">Duty</option>
+ <option value="training">Training</option>
+ <option value="other">Other</option>
+ </select>
+ </Field>
  <Field label="Window">
  <select className={inputClass} value={leaveFor} onChange={(e) => setLeaveFor(e.target.value)}>
  <option value="fullday">Full day</option>
@@ -772,7 +852,7 @@ function AdhocModal({
  <ClockPicker label="To" value={timeOut} onChange={setTimeOut} />
  </div>
  )}
- <button type="button" disabled={saving || !teacherId} onClick={save} className="w-full bg-indigo-600 text-white text-white rounded-lg py-2 text-sm disabled:opacity-50">
+ <button type="button" disabled={saving || (kind === "teacher" && !teacherId)} onClick={save} className="w-full bg-accent text-accent-ink text-accent-ink rounded-lg py-2 text-sm disabled:opacity-55">
  Add o substitution day
  </button>
  </div>

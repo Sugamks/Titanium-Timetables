@@ -26,7 +26,7 @@ export default function ConstraintGrid({
  const fallback = modes[0];
 
  if (!days.length || !periods.length) {
- return <p className="text-sm text-slate-500">Create a template with bell times first.</p>;
+ return <p className="text-sm text-muted">Create a template with bell times first.</p>;
  }
 
  return (
@@ -34,9 +34,9 @@ export default function ConstraintGrid({
  <table className="w-full table-fixed border-collapse">
  <thead>
  <tr>
- <th className="w-24 p-1 text-left text-xs font-medium text-slate-500"></th>
+ <th className="w-24 p-1 text-left text-xs font-medium text-muted"></th>
  {days.map((d) => (
- <th key={d.id} className="p-1 text-xs font-medium text-slate-600">
+ <th key={d.id} className="p-1 text-xs font-medium text-muted">
  {d.name.slice(0, 3)}
  </th>
  ))}
@@ -54,7 +54,7 @@ export default function ConstraintGrid({
  <span className={`w-1 shrink-0 rounded-sm ${tone.bar}`} aria-hidden />
  <div>
  <div className="font-medium">{p.name}</div>
- {clock && <div className={`tabular-nums text-[10px] ${tone.time}`}>{clock}</div>}
+ {clock && <div className={`tabular-nums text-xs ${tone.time}`}>{clock}</div>}
  </div>
  </div>
  </td>
@@ -66,9 +66,9 @@ export default function ConstraintGrid({
  }
  return (
  <tr key={p.id}>
- <td className="pr-2 py-1 text-xs text-slate-500 whitespace-nowrap">
+ <td className="pr-2 py-1 text-xs text-muted whitespace-nowrap">
  <div>{p.name}</div>
- {clock && <div className="tabular-nums text-[10px] text-slate-400">{clock}</div>}
+ {clock && <div className="tabular-nums text-xs text-muted">{clock}</div>}
  </td>
  {days.map((d) => {
  const key = `${d.id}:${p.id}`;

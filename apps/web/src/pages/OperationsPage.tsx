@@ -6,11 +6,12 @@ import { useToast } from "../ui/Toast";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
 import SubstitutionDayPanel from "./operations/SubstitutionDayPanel";
+import { DutiesPanel, MonthPanel, WeightsPanel } from "./operations/OpsExtra";
 import ExemptionsPanel from "./operations/ExemptionsPanel";
 
 const TEMPLATE_KEY = "construct-template-id";
 
-type Tab = "day" | "exemptions";
+ type Tab = "day" | "exemptions" | "duties" | "weights" | "month";
 
 export default function OperationsPage() {
  const toast = useToast();
@@ -121,28 +122,39 @@ export default function OperationsPage() {
  <h1 className="text-2xl font-semibold">Substitution</h1>
  <PageHelp page="operations" />
  </div>
- <p className="text-slate-500 text-sm">Cover absences against the saved or published week.</p>
+ <p className="text-muted text-sm">Cover absences against the saved or published week.</p>
  </div>
  <div className="flex flex-wrap items-center gap-2">
- <div className="flex rounded-lg border bg-white p-0.5 text-sm">
+ <div className="flex rounded-lg border bg-paper-3 p-0.5 text-sm">
  <button
  type="button"
- className={`px-3 py-1.5 rounded-md ${tab === "day" ? "bg-indigo-600 text-white" : "text-slate-600"}`}
+ className={`px-3 py-1.5 rounded-md ${tab === "day" ? "bg-accent text-accent-ink" : "text-muted"}`}
  onClick={() => setTab("day")}
  >
  Substitution day
  </button>
  <button
  type="button"
- className={`px-3 py-1.5 rounded-md ${tab === "exemptions" ? "bg-indigo-600 text-white" : "text-slate-600"}`}
+ className={`px-3 py-1.5 rounded-md ${tab === "exemptions" ? "bg-accent text-accent-ink" : "text-muted"}`}
  onClick={() => setTab("exemptions")}
  >
  Exemptions
  </button>
+ {(["duties", "weights", "month"] as const).map((id) => (
+ <button
+ key={id}
+ type="button"
+ className={`px-3 py-1.5 rounded-md ${tab === id ? "bg-accent text-accent-ink" : "text-muted"}`}
+ onClick={() => setTab(id)}
+ >
+ {id === "duties" ? "Duties" : id === "weights" ? "Weights" : "Month"}
+ </button>
+ ))}
  </div>
  </div>
  </header>
  <ErrorBanner message={err} onClear={() => setErr("")} />
+ <div key={tab} className="motion-swap">
  {tab === "day" ? (
  <SubstitutionDayPanel
  date={date}
@@ -151,11 +163,19 @@ export default function OperationsPage() {
  templateId={templateId}
  onTemplate={setTemplateId}
  teachers={teachers}
+ rooms={(catalog?.rooms || []).map((r: any) => ({ id: r.resource_id, name: r.name }))}
+ sections={(catalog?.sections || []).filter((s: any) => !yearId || s.academic_year_id === yearId).map((s: any) => ({ id: s.id, name: s.name }))}
  day={day}
  onChanged={() => loadDay()}
  onError={setErr}
  onMessage={toast}
  />
+ ) : tab === "duties" ? (
+ <DutiesPanel teachers={teachers} onError={setErr} />
+ ) : tab === "weights" ? (
+ <WeightsPanel onError={setErr} />
+ ) : tab === "month" ? (
+ <MonthPanel onError={setErr} />
  ) : (
  <ExemptionsPanel
  teachers={teachers}
@@ -165,6 +185,7 @@ export default function OperationsPage() {
  onMessage={toast}
  />
  )}
+ </div>
  </div>
  );
 }

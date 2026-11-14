@@ -6,11 +6,24 @@ import { IconButton } from "../ui/icons";
 import { currentYearId, onYearChange } from "../year";
 
 const TEMPLATE_KEY = "construct-template-id";
+const PAIR_TYPES = new Set(["LessonsTogether", "LessonsApart", "SameTime", "DifferentTime", "Before", "After", "Consecutive"]);
+const ROOM_TYPES = new Set([
+  "PreferredRoom",
+  "SameRoom",
+  "SameRoomAllWeek",
+  "MinRoomTypeUses",
+  "MaxRoomTypeUses",
+  "DifferentRoom",
+  "RoomUnavailable",
+]);
+const PERIOD_BOUND_TYPES = new Set(["StartAfter", "EndBefore"]);
+const LOAD_DAY_TYPES = new Set(["MaxDaysPerWeek", "MinLessonsPerDay", "MinTeacherWindows", "LunchBreak"]);
 import ConstraintGrid, { type PaintMode } from "./constraints/TimeOffGrid";
 import PageHelp from "../ui/PageHelp";
 import ErrorBanner from "../ui/ErrorBanner";
 import { useToast } from "../ui/Toast";
-type Tab = "global" | "staff" | "class";
+import NeedTemplate from "../ui/NeedTemplate";
+type Tab = "global" | "staff" | "class" | "subject" | "room";
 
 const PAINTED_TYPES = new Set([
  "TeacherUnavailable",
@@ -21,17 +34,17 @@ const PAINTED_TYPES = new Set([
 ]);
 
 const STAFF_MODES: PaintMode[] = [
- { id: "available", label: "Can each", className: "paint-cell bg-emerald-500 border-emerald-600 hover:bg-emerald-600 text-white", title: "Clear / can each" },
- { id: "unavailable", label: "No available", className: "paint-cell bg-slate-600 border-slate-700 hover:bg-slate-700 text-white", title: "Staff no available" },
+ { id: "available", label: "Can teach", className: "paint-cell bg-success border-success hover:bg-success text-accent-ink", title: "Clear, can teach" },
+ { id: "unavailable", label: "Not available", className: "paint-cell bg-ink border-ink hover:bg-ink text-accent-ink", title: "Staff not available" },
 ];
 
 const CLASS_MODES: PaintMode[] = [
- { id: "open", label: "Open", className: "paint-cell bg-emerald-500 border-emerald-600 hover:bg-emerald-600 text-white", title: "Any subject can be placed" },
- { id: "nocp", label: "No core", className: "paint-cell bg-amber-400 border-amber-500 hover:bg-amber-500 text-[#0f172a]", title: "No scholastic core (NOCP)" },
- { id: "nosl", label: "No language", className: "paint-cell bg-violet-600 border-violet-700 hover:bg-violet-700 text-white", title: "No scholastic language (NOSL)" },
- { id: "nopa", label: "No PE", className: "paint-cell bg-teal-600 border-teal-700 hover:bg-teal-700 text-white", title: "No physical activity (NOPA)" },
- { id: "cton", label: "Class teacher", className: "paint-cell bg-red-600 border-red-700 hover:bg-red-700 text-white", title: "Class teacher only (CTON)" },
- { id: "ncton", label: "No class teacher", className: "paint-cell bg-blue-600 border-blue-700 hover:bg-blue-700 text-white", title: "No class teacher (NCTON)" },
+ { id: "open", label: "Open", className: "paint-cell bg-success border-success hover:bg-success text-accent-ink", title: "Any subject can be placed" },
+ { id: "nocp", label: "No core", className: "paint-cell bg-warn border-warn hover:bg-warn text-ink", title: "No scholastic core (NOCP)" },
+ { id: "nosl", label: "No language", className: "paint-cell bg-accent border-accent hover:bg-accent text-accent-ink", title: "No scholastic language (NOSL)" },
+ { id: "nopa", label: "No PE", className: "paint-cell bg-success border-success hover:bg-success text-accent-ink", title: "No physical activity (NOPA)" },
+ { id: "cton", label: "Class teacher", className: "paint-cell bg-error border-error hover:bg-error text-accent-ink", title: "Class teacher only (CTON)" },
+ { id: "ncton", label: "No class teacher", className: "paint-cell bg-accent border-accent hover:bg-accent text-accent-ink", title: "No class teacher (NCTON)" },
 ];
 
 function ModePills({
@@ -52,7 +65,7 @@ function ModePills({
  title={m.title}
  onClick={() => onChange(m.id)}
  className={`text-xs rounded-full px-2.5 py-1 border ${
-            value === m.id ? "ring-2 ring-offset-1 ring-slate-800 dark:ring-indigo-300 dark:ring-offset-[#16192b]" : ""
+            value === m.id ? "ring-2 ring-offset-1 ring-ink ring-accent ring-offset-paper" : ""
           } ${m.className}`}
  >
  {m.label}
@@ -70,12 +83,17 @@ export default function ConstraintsPage() {
  const [tab, setTab] = useState<Tab>("global");
  const [teacherId, setTeacherId] = useState("");
  const [sectionId, setSectionId] = useState("");
+ const [subjectId, setSubjectId] = useState("");
+ const [roomId, setRoomId] = useState("");
+ const [lessonA, setLessonA] = useState("");
+ const [lessonB, setLessonB] = useState("");
  const [cells, setCells] = useState<Record<string, string>>({});
  const [classTeacherName, setClassTeacherName] = useState<string | null>(null);
  const [staffPaint, setStaffPaint] = useState("unavailable");
  const [classPaint, setClassPaint] = useState("nosl");
  const [typeCatalog, setTypeCatalog] = useState<any[]>([]);
  const [items, setItems] = useState<any[]>([]);
+ const [lessons, setLessons] = useState<any[]>([]);
  const [form, setForm] = useState({
  type_code: "MaxTeacherLessonsPerDay",
  severity: "soft",
@@ -84,7 +102,9 @@ export default function ConstraintsPage() {
  scope_id: "",
  day_ids: [] as string[],
  period_ids: [] as string[],
+ period_id: "",
  max: 5,
+ min: 2,
  });
  const [templateId, setTemplateId] = useState(() => {
  try {
@@ -101,21 +121,25 @@ export default function ConstraintsPage() {
  const [cloneBusy, setCloneBusy] = useState(false);
 
  async function loadAll() {
- const [cat, types, rows] = await Promise.all([
+ const [cat, types, rows, cards] = await Promise.all([
  api("/v1/catalog"),
  api("/v1/constraints/catalog"),
  api("/v1/constraints"),
+ api("/v1/lessons"),
  ]);
+ setLessons(cards || []);
  setResources(cat);
  setTypeCatalog(types || []);
  setItems(rows || []);
- setTeacherId((prev) => prev || cat.teachers[0]?.resource_id || "");
- setForm((f) => ({ ...f, scope_id: f.scope_id || cat.teachers[0]?.resource_id || "" }));
+ setTeacherId((prev) => prev || cat.teachers?.find((t: any) => t.is_active !== false)?.resource_id || "");
+ setForm((f) => ({ ...f, scope_id: f.scope_id || cat.teachers?.find((t: any) => t.is_active !== false)?.resource_id || "" }));
  const tts = (cat.timetables || []).filter((t: any) => !yearId || t.academic_year_id === yearId);
  setTemplateId((prev) => (prev && tts.some((t: any) => t.id === prev) ? prev : tts[0]?.id || ""));
  setPin((p) => ({ ...p, subject_id: p.subject_id || cat.subjects?.[0]?.id || "" }));
  const secs = (cat.sections || []).filter((s: any) => !yearId || s.academic_year_id === yearId);
  setSectionId((prev) => prev || secs[0]?.id || "");
+ setSubjectId((prev) => prev || cat.subjects?.[0]?.id || "");
+ setRoomId((prev) => prev || cat.rooms?.[0]?.resource_id || "");
  }
 
  useEffect(() => {
@@ -127,7 +151,7 @@ export default function ConstraintsPage() {
  const all = resources?.sections || [];
  return yearId ? all.filter((s: any) => s.academic_year_id === yearId) : all;
  }, [resources, yearId]);
- const teachers = resources?.teachers || [];
+ const teachers = (resources?.teachers || []).filter((t: any) => t.is_active !== false);
  const templates = useMemo(
  () => (resources?.timetables || []).filter((t: any) => !yearId || t.academic_year_id === yearId),
  [resources, yearId]
@@ -160,7 +184,7 @@ export default function ConstraintsPage() {
  const days = grid?.days || [];
  const allPeriods = grid?.periods || [];
  const periods = allPeriods.filter((p: any) => isTeachingPeriod(p));
- const otherTypes = typeCatalog.filter((t) => !PAINTED_TYPES.has(t.code));
+ const otherTypes = typeCatalog.filter((t) => !PAINTED_TYPES.has(t.code) && !ROOM_TYPES.has(t.code));
  const subjects = resources?.subjects || [];
  const globalItems = items.filter((i) => !i.timetable_id);
  const templateItems = items.filter((i) => i.timetable_id && (!templateId || i.timetable_id === templateId));
@@ -202,10 +226,24 @@ export default function ConstraintsPage() {
  .catch((e) => setErr(e.message));
  }, [tab, sectionId]);
 
+ useEffect(() => {
+ if (tab !== "subject" || !subjectId) return;
+ api(`/v1/constraints/grid?kind=subject&target_id=${encodeURIComponent(subjectId)}`)
+ .then((r) => setCells(r.cells || {}))
+ .catch((e) => setErr(e.message));
+ }, [tab, subjectId]);
+
+ useEffect(() => {
+ if (tab !== "room" || !roomId) return;
+ api(`/v1/constraints/grid?kind=room&target_id=${encodeURIComponent(roomId)}`)
+ .then((r) => setCells(r.cells || {}))
+ .catch((e) => setErr(e.message));
+ }, [tab, roomId]);
+
  async function paint(dayId: string, periodId: string, mode: string) {
  setErr("");
- const kind = tab === "staff" ? "teacher" : "section";
- const id = tab === "staff" ? teacherId : sectionId;
+ const kind = tab === "staff" ? "teacher" : tab === "subject" ? "subject" : tab === "room" ? "room" : "section";
+ const id = tab === "staff" ? teacherId : tab === "subject" ? subjectId : tab === "room" ? roomId : sectionId;
  if (!id) return;
  const key = `${dayId}:${periodId}`;
  const prev = cells[key];
@@ -220,7 +258,7 @@ export default function ConstraintsPage() {
  method: "POST",
  body: JSON.stringify({ kind, id, day_id: dayId, period_id: periodId, mode }),
  });
- toast("Saved");
+ toast(`Saved this period as ${mode.replace(/_/g, " ")}.`);
  } catch (e: any) {
  setCells((c) => {
  const next = { ...c };
@@ -252,7 +290,16 @@ export default function ConstraintsPage() {
  const g = await api(`/v1/constraints/grid?kind=section&target_id=${encodeURIComponent(sectionId)}`);
  setCells(g.cells || {});
  }
- toast("Saved");
+ const presetLine: Record<string, string> = {
+ first_period_class_teacher: "First period is reserved for the class teacher.",
+ second_period_non_class_teacher: "Second period stays off the class teacher.",
+ pin_subject: "Pinned that subject to the chosen periods.",
+ no_pe_after_lunch: extra.apply_all ? "PE after lunch is blocked for every class." : "PE after lunch is blocked for this class.",
+ no_core_last: extra.apply_all ? "Core subjects stay off the last period for every class." : "Core subjects stay off the last period for this class.",
+ max_consecutive: `Staff can teach at most ${extra.max} periods in a row${extra.apply_all ? ", across the school" : ""}.`,
+ max_per_day: `Staff can teach at most ${extra.max} periods a day${extra.apply_all ? ", across the school" : ""}.`,
+ };
+ toast(presetLine[code] || "Saved that rule.");
  } catch (e: any) {
  setErr(e.message);
  } finally {
@@ -268,9 +315,26 @@ export default function ConstraintsPage() {
  params.day_ids = form.day_ids;
  params.period_ids = form.period_ids;
  }
- if (form.type_code.startsWith("Max") || form.type_code.startsWith("Min") || form.type_code === "ContractHours") {
- params.max = form.max;
+ if (PERIOD_BOUND_TYPES.has(form.type_code)) {
+ const pid = form.period_id || form.period_ids[0] || "";
+ if (!pid) {
+ setErr("Choose one period for this rule.");
+ return;
  }
+ params.period_id = pid;
+ }
+ if (form.type_code === "LunchBreak") {
+ params.period_ids = form.period_ids;
+ }
+ if (form.type_code === "MaxDaysPerWeek") {
+ params.max = form.max;
+ } else if (form.type_code === "MinLessonsPerDay" || form.type_code === "MinTeacherWindows") {
+ params.min = form.min;
+ } else if (form.type_code.startsWith("Max") || form.type_code.startsWith("Min") || form.type_code === "ContractHours") {
+ params.max = form.max;
+ params.min = form.max;
+ }
+ if (PAIR_TYPES.has(form.type_code)) params.other_lesson_id = lessonB;
  try {
  await api("/v1/constraints", {
  method: "POST",
@@ -278,14 +342,14 @@ export default function ConstraintsPage() {
  type_code: form.type_code,
  severity: form.severity,
  weight: form.weight,
- scope: form.scope,
- scope_id: form.scope_id || null,
+ scope: PAIR_TYPES.has(form.type_code) ? "lesson" : form.scope,
+ scope_id: PAIR_TYPES.has(form.type_code) ? lessonA : form.scope_id || null,
  timetable_id: form.scope === "global" ? null : templateId || null,
  params,
  }),
  });
  setItems((await api("/v1/constraints")) || []);
- toast("Saved");
+ toast(`Added the ${typeName(form.type_code)} rule.`);
  } catch (e: any) {
  setErr(e.message);
  }
@@ -296,8 +360,10 @@ export default function ConstraintsPage() {
  return ids.map((id) => days.find((d: any) => d.id === id)?.name?.slice(0, 3) || id).join(", ");
  }
 
- const modes = tab === "staff" ? STAFF_MODES : CLASS_MODES;
- const paintMode = tab === "staff" ? staffPaint : classPaint;
+ const modes = tab === "class" ? CLASS_MODES : STAFF_MODES;
+ const paintMode = tab === "class" ? classPaint : staffPaint;
+
+ if (resources && templates.length === 0) return <NeedTemplate what="Constraints" />;
 
  return (
  <div className="h-full min-h-0 flex flex-col gap-3">
@@ -307,7 +373,7 @@ export default function ConstraintsPage() {
  <h1 className="text-2xl font-semibold">Constraints</h1>
  <PageHelp page="constraints" />
  </div>
- <p className="text-slate-500 text-sm mt-1">
+ <p className="text-muted text-sm mt-1">
  Global rules apply to every template. Class and staff rules belong to the selected template.
  </p>
  </div>
@@ -315,11 +381,13 @@ export default function ConstraintsPage() {
 
  <ErrorBanner className="shrink-0" message={err} onClear={() => setErr("")} />
 
- <div className="shrink-0 flex gap-1 border-b border-slate-200">
+ <div className="shrink-0 flex gap-1 border-b border-rule">
  {([
  { id: "global" as const, label: "Global", hint: "Firs period, pinned subjects" },
  { id: "class" as const, label: "Class", hint: "Template · CT, PE, last period" },
  { id: "staff" as const, label: "Staff", hint: "Template · availability and load" },
+ { id: "subject" as const, label: "Subject", hint: "Subject time off" },
+ { id: "room" as const, label: "Room", hint: "Room time off" },
  ]).map((t) => (
  <button
  key={t.id}
@@ -328,16 +396,16 @@ export default function ConstraintsPage() {
  setCells({});
  }}
  className={`px-4 py-2 text-sm rounded-t-lg ${
-              tab === t.id ? "bg-white border border-b-white border-slate-200 -mb-px font-medium text-slate-900" : "text-slate-500 hover:text-slate-800"
+              tab === t.id ? "bg-paper-3 border border-b-paper-3 border-rule -mb-px font-medium text-ink" : "text-muted hover:text-ink"
             }`}
  >
  {t.label}
- <span className="hidden sm:inline text-slate-400 font-normal"> · {t.hint}</span>
+ <span className="hidden sm:inline text-muted font-normal"> · {t.hint}</span>
  </button>
  ))}
  </div>
 
- <div className="flex-1 min-h-0 bg-white border rounded-xl p-4 shadow-sm flex flex-col gap-3 overflow-auto">
+ <div key={tab} className="motion-swap flex-1 min-h-0 bg-paper-3 border rounded-xl p-4 flex flex-col gap-3 overflow-auto">
  {tab === "global" ? (
  <>
  {templates.length > 0 && (
@@ -356,7 +424,7 @@ export default function ConstraintsPage() {
  type="button"
  disabled={!!presetBusy}
  onClick={() => applyPreset("first_period_class_teacher")}
- className="text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50 disabled:opacity-50"
+ className="text-sm rounded-lg border border-rule bg-paper-3 px-3 py-2 hover:bg-paper-2 disabled:opacity-55"
  >
  {presetBusy === "first_period_class_teacher" ? "Saving…" : "All first periods = class teacher"}
  </button>
@@ -364,12 +432,12 @@ export default function ConstraintsPage() {
  type="button"
  disabled={!!presetBusy}
  onClick={() => applyPreset("second_period_non_class_teacher")}
- className="text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50 disabled:opacity-50"
+ className="text-sm rounded-lg border border-rule bg-paper-3 px-3 py-2 hover:bg-paper-2 disabled:opacity-55"
  >
  {presetBusy === "second_period_non_class_teacher" ? "Saving…" : "All second periods = no class teacher"}
  </button>
  </div>
- <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
+ <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg border border-rule bg-paper-2">
  <div className="w-52">
  <SearchSelect
  label="Pin subject"
@@ -401,7 +469,7 @@ export default function ConstraintsPage() {
  type="button"
  disabled={!!presetBusy}
  onClick={() => applyPreset("pin_subject", pin)}
- className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+ className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55"
  >
  {presetBusy === "pin_subject" ? "Saving…" : "Pin"}
  </button>
@@ -429,6 +497,24 @@ export default function ConstraintsPage() {
  <input type="number" className="mt-1 w-full border rounded-lg px-2 py-1.5" value={form.weight} onChange={(e) => setForm({ ...form, weight: Number(e.target.value) })} />
  </label>
  </div>
+ {PAIR_TYPES.has(form.type_code) && (
+ <div className="grid md:grid-cols-2 gap-3">
+ <SearchSelect
+ label="Lesson A"
+ value={lessonA}
+ onChange={setLessonA}
+ options={lessons.map((l: any) => ({ value: l.id, label: `${l.subject || "Lesson"} · ${l.section || ""}` }))}
+ placeholder="First lesson"
+ />
+ <SearchSelect
+ label="Lesson B"
+ value={lessonB}
+ onChange={setLessonB}
+ options={lessons.map((l: any) => ({ value: l.id, label: `${l.subject || "Lesson"} · ${l.section || ""}` }))}
+ placeholder="Second lesson"
+ />
+ </div>
+ )}
  <div className="grid md:grid-cols-3 gap-3">
  <SearchSelect
  label="Applies o"
@@ -459,12 +545,62 @@ export default function ConstraintsPage() {
  placeholder="Search class"
  />
  )}
- {(form.type_code.startsWith("Max") || form.type_code.startsWith("Min") || form.type_code === "ContractHours") && (
+ {form.type_code === "MaxDaysPerWeek" && (
+ <label className="text-sm">Max teaching days / week
+ <input type="number" min={1} max={7} className="mt-1 w-full border rounded-lg px-2 py-1.5" value={form.max} onChange={(e) => setForm({ ...form, max: Number(e.target.value) })} />
+ </label>
+ )}
+ {form.type_code === "MinLessonsPerDay" && (
+ <label className="text-sm">Min lessons on a working day
+ <input type="number" min={1} className="mt-1 w-full border rounded-lg px-2 py-1.5" value={form.min} onChange={(e) => setForm({ ...form, min: Number(e.target.value) })} />
+ </label>
+ )}
+ {form.type_code === "MinTeacherWindows" && (
+ <label className="text-sm">Min free gaps in a working day
+ <input type="number" min={0} className="mt-1 w-full border rounded-lg px-2 py-1.5" value={form.min} onChange={(e) => setForm({ ...form, min: Number(e.target.value) })} />
+ </label>
+ )}
+ {!LOAD_DAY_TYPES.has(form.type_code) && !PERIOD_BOUND_TYPES.has(form.type_code) && (form.type_code.startsWith("Max") || form.type_code.startsWith("Min") || form.type_code === "ContractHours") && (
  <label className="text-sm">Max / min
  <input type="number" className="mt-1 w-full border rounded-lg px-2 py-1.5" value={form.max} onChange={(e) => setForm({ ...form, max: Number(e.target.value) })} />
  </label>
  )}
  </div>
+ {PERIOD_BOUND_TYPES.has(form.type_code) && (
+ <div className="w-72">
+ <SearchSelect
+ label={form.type_code === "StartAfter" ? "No lessons before this period" : "No lessons after this period"}
+ value={form.period_id}
+ onChange={(period_id) => setForm({ ...form, period_id, period_ids: period_id ? [period_id] : [] })}
+ options={periods.map((p: any) => ({ value: p.id, label: p.name }))}
+ placeholder="Choose period"
+ />
+ </div>
+ )}
+ {form.type_code === "LunchBreak" && (
+ <div className="space-y-1">
+ <p className="text-xs text-muted">Optional: pick teaching periods that count as the lunch window. Leave empty to use periods beside the lunch break.</p>
+ <div className="flex flex-wrap gap-2 text-sm">
+ {periods.map((p: any) => (
+ <label key={p.id} className="border rounded-lg px-2 py-1">
+ <input
+ type="checkbox"
+ checked={form.period_ids.includes(p.id)}
+ onChange={(e) =>
+ setForm({
+ ...form,
+ period_ids: e.target.checked ? [...form.period_ids, p.id] : form.period_ids.filter((x) => x !== p.id),
+ })
+ }
+ />{" "}
+ {p.name}
+ </label>
+ ))}
+ </div>
+ </div>
+ )}
+ {!PERIOD_BOUND_TYPES.has(form.type_code) && form.type_code !== "LunchBreak" && (
+ <>
  <div className="flex flex-wrap gap-2 text-sm">
  {days.map((d: any) => (
  <label key={d.id} className="border rounded-lg px-2 py-1">
@@ -499,10 +635,12 @@ export default function ConstraintsPage() {
  </label>
  ))}
  </div>
- <button className="bg-indigo-600 text-white rounded-lg px-3 py-2 text-sm">Save constraint</button>
+ </>
+ )}
+ <button className="bg-accent text-accent-ink rounded-lg px-3 py-2 text-sm">Save constraint</button>
  </form>
  <ul className="border rounded-xl divide-y">
- {otherItems.length === 0 && <li className="p-3 text-sm text-slate-500">No extra constraints yet.</li>}
+ {otherItems.length === 0 && <li className="p-3 text-sm text-muted">No extra constraints yet.</li>}
  {otherItems.map((i) => (
  <li key={i.id} className="p-3 flex justify-between gap-3 text-sm">
  <span>
@@ -516,7 +654,7 @@ export default function ConstraintsPage() {
  onClick={async () => {
  await api(`/v1/constraints/${i.id}`, { method: "DELETE" });
  setItems((rows) => rows.filter((r) => r.id !== i.id));
- toast("Saved");
+ toast(`Removed the ${typeName(i.type_code)} rule.`);
  }}
  />
  </li>
@@ -537,7 +675,7 @@ export default function ConstraintsPage() {
  />
  </div>
  )}
- {tab === "staff" ? (
+ {tab === "staff" && (
  <div className="w-72">
  <SearchSelect
  label="Teacher"
@@ -550,7 +688,8 @@ export default function ConstraintsPage() {
  placeholder="Search staff"
  />
  </div>
- ) : (
+ )}
+ {tab === "class" && (
  <div className="w-72">
  <SearchSelect
  label="Class"
@@ -564,17 +703,39 @@ export default function ConstraintsPage() {
  />
  </div>
  )}
+ {tab === "subject" && (
+ <div className="w-72">
+ <SearchSelect
+ label="Subject"
+ value={subjectId}
+ onChange={(id) => { setSubjectId(id); setCells({}); }}
+ options={(resources?.subjects || []).map((s: any) => ({ value: s.id, label: s.name }))}
+ placeholder="Subject"
+ />
+ </div>
+ )}
+ {tab === "room" && (
+ <div className="w-72">
+ <SearchSelect
+ label="Room"
+ value={roomId}
+ onChange={(id) => { setRoomId(id); setCells({}); }}
+ options={(resources?.rooms || []).map((r: any) => ({ value: r.resource_id, label: r.name }))}
+ placeholder="Room"
+ />
+ </div>
+ )}
  <div className="flex-1 min-w-[16rem]">
- <div className="text-xs text-slate-500 mb-1">Paint</div>
+ <div className="text-xs text-muted mb-1">Paint</div>
  <ModePills
  modes={modes}
  value={paintMode}
- onChange={(id) => (tab === "staff" ? setStaffPaint(id) : setClassPaint(id))}
+ onChange={(id) => (tab === "class" ? setClassPaint(id) : setStaffPaint(id))}
  />
  </div>
  </div>
  {tab === "class" && (
- <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
+ <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg border border-rule bg-paper-2">
  <div className="w-56">
  <SearchSelect
  label="Clone from"
@@ -598,7 +759,7 @@ export default function ConstraintsPage() {
  <button
  type="button"
  disabled={cloneBusy || !cloneInto.length}
- className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+ className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55"
  onClick={async () => {
  setErr("");
  setCloneBusy(true);
@@ -618,7 +779,7 @@ export default function ConstraintsPage() {
  setCells(g.cells || {});
  }
  setItems((await api("/v1/constraints")) || []);
- toast("Saved");
+ toast(`Copied this class's rules onto ${into.length} ${into.length === 1 ? "class" : "classes"}.`);
  } catch (e: any) {
  setErr(e.message);
  } finally {
@@ -628,20 +789,20 @@ export default function ConstraintsPage() {
  >
  {cloneBusy ? "Copying…" : "Clone painted cells"}
  </button>
- <p className="w-full text-xs text-slate-500">
+ <p className="w-full text-xs text-muted">
  Replaces painted class rules on the target classes (NA, NOSL, CTON, and the rest). Does not change staff constraints.
  </p>
  </div>
  )}
  {tab === "class" && (
  <div className="flex flex-wrap items-center gap-2">
- <p className="text-sm text-slate-600 mr-auto">
+ <p className="text-sm text-muted mr-auto">
  Class teacher: <strong>{classTeacherName || "no set"}</strong>
  </p>
  <button
  type="button"
  disabled={!!presetBusy}
- className="text-xs rounded-lg border px-2 py-1 hover:bg-slate-50"
+ className="text-xs rounded-lg border px-2 py-1 hover:bg-paper-2"
  onClick={() => applyPreset("no_pe_after_lunch")}
  >
  {presetBusy === "no_pe_after_lunch" ? "Saving…" : "No PE after lunch"}
@@ -649,7 +810,7 @@ export default function ConstraintsPage() {
  <button
  type="button"
  disabled={!!presetBusy}
- className="text-xs rounded-lg border px-2 py-1 hover:bg-slate-50"
+ className="text-xs rounded-lg border px-2 py-1 hover:bg-paper-2"
  onClick={() => applyPreset("no_core_last")}
  >
  {presetBusy === "no_core_last" ? "Saving…" : "No core last period"}
@@ -657,24 +818,24 @@ export default function ConstraintsPage() {
  <button
  type="button"
  disabled={!!presetBusy}
- className="text-xs rounded-lg border px-2 py-1 hover:bg-slate-50"
+ className="text-xs rounded-lg border px-2 py-1 hover:bg-paper-2 whitespace-nowrap"
  onClick={() => applyPreset("no_pe_after_lunch", { apply_all: true })}
  >
- Apply PE rule o all classes
+ Apply PE rule to all classes
  </button>
  <button
  type="button"
  disabled={!!presetBusy}
- className="text-xs rounded-lg border px-2 py-1 hover:bg-slate-50"
+ className="text-xs rounded-lg border px-2 py-1 hover:bg-paper-2 whitespace-nowrap"
  onClick={() => applyPreset("no_core_last", { apply_all: true })}
  >
- Apply last-period rule o all classes
+ Apply last-period rule to all classes
  </button>
  </div>
  )}
  {tab === "staff" && (
  <div className="flex flex-wrap items-end gap-2">
- <label className="text-xs text-slate-600">
+ <label className="text-xs text-muted">
  Max consecutive
  <input
  type="number"
@@ -700,7 +861,7 @@ export default function ConstraintsPage() {
  >
  All staff
  </button>
- <label className="text-xs text-slate-600 ml-3">
+ <label className="text-xs text-muted ml-3">
  Max periods / day
  <input
  type="number"

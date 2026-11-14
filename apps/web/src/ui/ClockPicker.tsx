@@ -125,61 +125,61 @@ export default function ClockPicker({
  ref={btnRef}
  type="button"
  title={`Set ${label}`}
- className="min-w-[4.75rem] text-left border border-slate-200 dark:border-slate-600 rounded-md px-2 py-1 bg-white dark:bg-[var(--app-input)] hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50"
+ className="clock-trigger text-left border border-rule rounded-lg px-2 py-1 bg-paper-3 hover:border-accent hover:bg-paper-2"
  onClick={() => {
  syncFromValue();
  setMode("hour");
  setOpen((v) => !v);
  }}
  >
- <div className="text-[10px] uppercase tracking-wide text-slate-400">{label}</div>
- <div className="text-xs font-semibold tabular-nums text-slate-800">{formatLabel(value)}</div>
+ <div className="text-xs   text-muted">{label}</div>
+ <div className="text-xs font-semibold tabular-nums text-ink">{formatLabel(value)}</div>
  </button>
  {open &&
  createPortal(
  <div
  ref={popRef}
- className="fixed z-[90] w-[200px] rounded-2xl border border-slate-200 dark:border-[var(--app-border)] bg-white dark:bg-[var(--app-card)] shadow-xl p-3"
+ className="pop-in fixed z-[90] w-[200px] border border-rule bg-paper-3 p-3"
  style={{ top: pos.top, left: pos.left }}
  >
  <div className="flex items-center justify-between mb-2">
- <div className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+ <div className="text-sm font-semibold tabular-nums text-ink">
  {hour24 % 12 || 12}:{String(minute).padStart(2, "0")}
  </div>
- <div className="flex rounded-md overflow-hidden border border-slate-200 dark:border-[var(--app-border)] text-[11px]">
+ <div className="flex rounded-md overflow-hidden border border-rule dark:border-[var(--app-border)] text-xs">
  <button
  type="button"
- className={`px-2 py-0.5 ${hour24 < 12 ? "bg-indigo-600 text-white" : "bg-white text-slate-600 dark:bg-[var(--app-input)] dark:text-slate-300"}`}
+ className={`px-2 py-0.5 ${hour24 < 12 ? "bg-accent text-accent-ink" : "bg-paper-3 text-muted dark:bg-[var(--app-input)] text-muted"}`}
  onClick={() => toggleMeridiem(false)}
  >
  AM
  </button>
  <button
  type="button"
- className={`px-2 py-0.5 ${hour24 >= 12 ? "bg-indigo-600 text-white" : "bg-white text-slate-600 dark:bg-[var(--app-input)] dark:text-slate-300"}`}
+ className={`px-2 py-0.5 ${hour24 >= 12 ? "bg-accent text-accent-ink" : "bg-paper-3 text-muted dark:bg-[var(--app-input)] text-muted"}`}
  onClick={() => toggleMeridiem(true)}
  >
  PM
  </button>
  </div>
  </div>
- <div className="flex justify-center gap-2 mb-2 text-[11px]">
+ <div className="flex justify-center gap-2 mb-2 text-xs">
  <button
  type="button"
- className={`px-2 py-0.5 rounded-full ${mode === "hour" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-200" : "text-slate-500"}`}
+ className={`px-2 py-0.5 rounded-full ${mode === "hour" ? "bg-paper-2 text-accent" : "text-muted"}`}
  onClick={() => setMode("hour")}
  >
  Hour
  </button>
  <button
  type="button"
- className={`px-2 py-0.5 rounded-full ${mode === "minute" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-200" : "text-slate-500"}`}
+ className={`px-2 py-0.5 rounded-full ${mode === "minute" ? "bg-paper-2 text-accent" : "text-muted"}`}
  onClick={() => setMode("minute")}
  >
  Minute
  </button>
  </div>
- <svg viewBox="0 0 176 176" className="w-full">
+ <svg viewBox="0 0 176 176" className="w-full" aria-hidden="true">
  <circle cx={CX} cy={CY} r="80" fill="var(--clock-face)" stroke="var(--clock-face-stroke)" />
  <line x1={CX} y1={CY} x2={hand.x} y2={hand.y} stroke="var(--clock-accent)" strokeWidth="3" strokeLinecap="round" />
  <circle cx={CX} cy={CY} r="4" fill="var(--clock-accent)" />
@@ -204,7 +204,7 @@ export default function ClockPicker({
  );
  })}
  </svg>
- <p className="text-[10px] text-center text-slate-400 mt-1">
+ <p className="text-xs text-center text-muted mt-1">
  {mode === "hour" ? "Click an hour, then a minute" : "5-minute steps · click to set"}
  </p>
  </div>,

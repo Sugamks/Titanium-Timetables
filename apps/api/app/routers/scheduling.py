@@ -51,7 +51,7 @@ from app.services.school_catalog import (
     _unique_short,
 )
 from app.services.impact import clone_version
-from app.services.lesson_clone import clone_decision, covering_section, existing_keys
+from app.services.lesson_clone import clone_decision, covering_section, existing_keys, match_lesson
 from app.services.subjects import category_label, normalize_category
 from app.services.workload import forecast_new_section, teacher_workload
 
@@ -74,6 +74,8 @@ class LessonIn(BaseModel):
     teacher_resource_ids: list[str] | None = None
     room_resource_ids: list[str] | None = None
     required_room_type: str | None = None
+    blocks: list[int] | None = None
+    allowed_room_ids: list[str] | None = None
     priority: int = 50
 
 
@@ -88,6 +90,8 @@ class LessonPatch(BaseModel):
     room_resource_id: str | None = None
     teacher_resource_ids: list[str] | None = None
     room_resource_ids: list[str] | None = None
+    blocks: list[int] | None = None
+    allowed_room_ids: list[str] | None = None
     week_pattern_id: str | None = None
     required_room_type: str | None = None
     priority: int | None = None
@@ -236,6 +240,7 @@ class SubjectPatch(BaseModel):
     color: str | None = None
     academic_year_id: str | None = None
     is_difficult: bool | None = None
+    is_active: bool | None = None
     category: str | None = None
 
 
@@ -257,6 +262,7 @@ class TeacherIn(BaseModel):
     name: str
     department: str | None = None
     short_name: str | None = None
+    is_active: bool = True
 
 
 class ClassIn(BaseModel):
@@ -275,6 +281,7 @@ class TeacherPatch(BaseModel):
     name: str | None = None
     department: str | None = None
     short_name: str | None = None
+    is_active: bool | None = None
 
 
 class ClassPatch(BaseModel):
@@ -282,6 +289,7 @@ class ClassPatch(BaseModel):
     section_name: str | None = None
     class_teacher_id: str | None = None
     short_name: str | None = None
+    is_active: bool | None = None
 
 
 def _lesson_out(les: models.Lesson) -> dict:
@@ -308,6 +316,9 @@ def _lesson_out(les: models.Lesson) -> dict:
         "academic_year_id": year_id,
         "frequency_per_week": les.frequency_per_week,
         "duration_periods": les.duration_periods,
+        "blocks": list(les.blocks or []),
+        "allowed_room_ids": list(les.allowed_room_ids or []),
+        "week_code": les.week_pattern.code if les.week_pattern else "ALL",
         "lesson_type": les.lesson_type,
         "week_pattern_id": les.week_pattern_id,
         "required_room_type": les.required_room_type,
@@ -480,7 +491,7 @@ def catalog(db: Session = Depends(get_db), user=Depends(get_current_user)):
             }
             for g in live_grids
         ],
-        "teachers": [{"id": t.id, "resource_id": t.resource_id, "name": t.resource.name, "short_name": t.short_name, "department": t.department, "contract_periods": t.contract_periods} for t in teachers],
+        "teachers": [{"id": t.id, "resource_id": t.resource_id, "name": t.resource.name, "short_name": t.short_name, "department": t.department, "contract_periods": t.contract_periods, "is_active": t.resource.is_active is not False} for t in teachers],
         "sections": [
             {
                 "id": s.id,
@@ -493,13 +504,14 @@ def catalog(db: Session = Depends(get_db), user=Depends(get_current_user)):
                 "home_room_id": s.home_room_id,
                 "student_count": s.student_count,
                 "class_teacher_id": s.class_teacher_id,
+                "is_active": s.resource.is_active is not False if s.resource else True,
                 "class_teacher_resource_id": s.class_teacher.resource_id if s.class_teacher else None,
                 "class_teacher_name": teacher_name.get(s.class_teacher_id) if s.class_teacher_id else None,
                 "assistant_class_teacher_id": s.assistant_class_teacher_id,
             }
             for s in sections
         ],
-        "rooms": [{"id": r.id, "resource_id": r.resource_id, "name": r.resource.name, "capacity": r.capacity, "room_type": r.room_type} for r in rooms],
+        "rooms": [{"id": r.id, "resource_id": r.resource_id, "name": r.resource.name, "capacity": r.capacity, "room_type": r.room_type, "building": r.building, "floor": r.floor, "is_active": r.resource.is_active is not False} for r in rooms],
         "subjects": [
             {
                 "id": s.id,
@@ -507,6 +519,7 @@ def catalog(db: Session = Depends(get_db), user=Depends(get_current_user)):
                 "short_name": s.short_name,
                 "color": s.color,
                 "is_difficult": s.is_difficult,
+                "is_active": s.is_active is not False,
                 "category": normalize_category(s.category),
                 "category_label": category_label(s.category),
                 "academic_year_ids": year_ids_by_subject.get(s.id, []),
@@ -649,6 +662,7 @@ def _subject_out(s: models.Subject, year_ids: list[str] | None = None) -> dict:
         "short_name": s.short_name,
         "color": s.color,
         "is_difficult": bool(s.is_difficult),
+        "is_active": s.is_active is not False,
         "category": normalize_category(s.category),
         "category_label": category_label(s.category),
         "academic_year_ids": year_ids or [],
@@ -657,6 +671,7 @@ def _subject_out(s: models.Subject, year_ids: list[str] | None = None) -> dict:
 
 @router.post("/subjects")
 def create_subject(body: SubjectIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_template(db, body.academic_year_id)
     name = (body.name or "").strip().upper()
     if not name:
         raise HTTPException(400, "Subject name is required")
@@ -738,6 +753,8 @@ def update_subject(sid: str, body: SubjectPatch, db: Session = Depends(get_db), 
         s.is_difficult = bool(body.is_difficult)
     if body.category is not None:
         s.category = normalize_category(body.category)
+    if body.is_active is not None:
+        s.is_active = bool(body.is_active)
     if body.academic_year_id:
         exists = db.query(models.SubjectYear).filter_by(subject_id=s.id, academic_year_id=body.academic_year_id).first()
         if not exists:
@@ -753,7 +770,7 @@ def delete_subject(sid: str, db: Session = Depends(get_db), user=Depends(require
     if not s:
         raise HTTPException(404, "Subject not found")
     if db.query(models.Lesson).filter_by(subject_id=s.id).first():
-        raise HTTPException(400, "This subject is used by lessons. Remove those lessons first.")
+        raise HTTPException(400, "This subject is already used. Deactivate it instead of deleting it.")
     db.query(models.SubjectYear).filter_by(subject_id=s.id).delete()
     db.query(models.TeacherSubject).filter_by(subject_id=s.id).delete()
     db.delete(s)
@@ -763,6 +780,7 @@ def delete_subject(sid: str, db: Session = Depends(get_db), user=Depends(require
 
 @router.post("/rooms")
 def create_room(body: RoomIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_template(db)
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "Room name is required")
@@ -794,6 +812,46 @@ def create_room(body: RoomIn, db: Session = Depends(get_db), user=Depends(requir
         "room_type": room.room_type,
         "capacity": room.capacity,
         "floor": room.floor,
+        "building": room.building,
+    }
+
+
+class RoomPatch(BaseModel):
+    name: str | None = None
+    room_type: str | None = None
+    capacity: int | None = None
+    floor: str | None = None
+    building: str | None = None
+    is_active: bool | None = None
+
+
+@router.patch("/rooms/{rid}")
+def update_room(rid: str, body: RoomPatch, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    room = db.get(models.Room, rid)
+    if not room:
+        raise HTTPException(404, "Room not found")
+    if body.name is not None and body.name.strip() and room.resource:
+        room.resource.name = body.name.strip()
+    if body.room_type is not None:
+        room.room_type = body.room_type or None
+    if body.capacity is not None:
+        room.capacity = max(1, body.capacity)
+    if body.floor is not None:
+        room.floor = body.floor or None
+    if body.building is not None:
+        room.building = body.building or None
+    if body.is_active is not None and room.resource:
+        room.resource.is_active = bool(body.is_active)
+    db.commit()
+    return {
+        "id": room.id,
+        "resource_id": room.resource_id,
+        "name": room.resource.name if room.resource else "",
+        "room_type": room.room_type,
+        "capacity": room.capacity,
+        "building": room.building,
+        "floor": room.floor,
+        "is_active": room.resource.is_active is not False if room.resource else True,
     }
 
 
@@ -806,9 +864,11 @@ def delete_room(rid: str, db: Session = Depends(get_db), user=Depends(require_ro
         db.query(models.LessonResource)
         .filter_by(resource_id=room.resource_id)
         .first()
+        or db.query(models.LessonAllocation).filter_by(room_resource_id=room.resource_id).first()
+        or db.query(models.Absence).filter_by(room_resource_id=room.resource_id).first()
     )
     if used:
-        raise HTTPException(400, "This room is used by lessons. Remove it from those lessons first.")
+        raise HTTPException(400, "This room is already used. Deactivate it instead of deleting it.")
     res = db.get(models.Resource, room.resource_id)
     db.delete(room)
     if res:
@@ -838,13 +898,14 @@ def patch_year(year_id: str, body: ShortIn, db: Session = Depends(get_db), user=
 
 @router.post("/teachers")
 def create_teacher(body: TeacherIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
-    teacher = _school_call(lambda: add_teacher(db, body.name, body.department, body.short_name))
+    teacher = _school_call(lambda: add_teacher(db, body.name, body.department, body.short_name, body.is_active))
     return {
         "id": teacher.id,
         "resource_id": teacher.resource_id,
         "name": teacher.resource.name,
         "short_name": teacher.short_name,
         "department": teacher.department,
+        "is_active": teacher.resource.is_active is not False,
     }
 
 
@@ -856,6 +917,7 @@ def patch_teacher(teacher_id: str, body: TeacherPatch, db: Session = Depends(get
         "name": teacher.resource.name if teacher.resource else "",
         "short_name": teacher.short_name,
         "department": teacher.department,
+        "is_active": teacher.resource.is_active is not False if teacher.resource else True,
     }
 
 
@@ -867,6 +929,7 @@ def remove_teacher(teacher_id: str, db: Session = Depends(get_db), user=Depends(
 
 @router.post("/sections")
 def create_section(body: ClassIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_template(db, body.academic_year_id)
     section = _school_call(
         lambda: add_class(
             db, body.class_name, body.section_name, body.academic_year_id, body.class_teacher_id, body.short_name
@@ -941,6 +1004,24 @@ def _default_grid_id(db: Session, section_id: str | None = None, requested_grid_
     return templates[0].time_grid_id
 
 
+def _apply_lesson_shape(les: models.Lesson, blocks: list[int] | None, allowed_room_ids: list[str] | None) -> None:
+    if blocks:
+        clean = []
+        for item in blocks:
+            try:
+                n = int(item)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                clean.append(n)
+        if clean:
+            les.blocks = clean
+            les.frequency_per_week = len(clean)
+            les.duration_periods = max(clean)
+    if allowed_room_ids is not None:
+        les.allowed_room_ids = [rid for rid in allowed_room_ids if rid]
+
+
 def _week_pattern_id(db: Session, requested: str | None) -> str | None:
     if requested:
         return requested
@@ -948,16 +1029,46 @@ def _week_pattern_id(db: Session, requested: str | None) -> str | None:
     return row.id if row else None
 
 
+def _require_template(db: Session, year_id: str | None = None) -> None:
+    query = db.query(models.Timetable).filter(models.Timetable.deleted_at.is_(None))
+    if year_id:
+        query = query.filter(models.Timetable.academic_year_id == year_id)
+    if query.first() is None:
+        raise HTTPException(400, "Create a timetable template first (Templates), then continue.")
+
+
+def _require_active_subject(db: Session, subject_id: str) -> None:
+    subject = db.get(models.Subject, subject_id)
+    if not subject:
+        raise HTTPException(400, "Subject not found. Add it on the School tab first.")
+    if subject.is_active is False:
+        raise HTTPException(400, "That subject is inactive. Pick an active subject.")
+
+
+def _require_active_section(db: Session, section_id: str) -> None:
+    section = db.get(models.Section, section_id)
+    if not section:
+        raise HTTPException(400, "Section not found. Add it on the School tab first.")
+    if section.resource and section.resource.is_active is False:
+        raise HTTPException(400, "That class is inactive. Pick an active class.")
+
+
+def _require_active_teacher(db: Session, resource_id: str) -> None:
+    res = db.get(models.Resource, resource_id)
+    if not res or res.type != "teacher":
+        raise HTTPException(400, "Teacher not found. Add it on the School tab first.")
+    if res.is_active is False:
+        raise HTTPException(400, "That teacher is inactive. Pick an active teacher.")
+
+
 @router.post("/lessons")
 def create_lesson(body: LessonIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
-    if not db.get(models.Subject, body.subject_id):
-        raise HTTPException(400, "Subject not found. Add it on the School tab first.")
+    _require_active_subject(db, body.subject_id)
     section_ids = list(body.section_ids or [])
     if body.section_id and body.section_id not in section_ids:
         section_ids.insert(0, body.section_id)
     for sid in section_ids:
-        if not db.get(models.Section, sid):
-            raise HTTPException(400, "Section not found. Add it on the School tab first.")
+        _require_active_section(db, sid)
     if body.time_grid_id:
         live = (
             db.query(models.Timetable)
@@ -984,6 +1095,7 @@ def create_lesson(body: LessonIn, db: Session = Depends(get_db), user=Depends(re
         required_room_type=body.required_room_type,
         priority=body.priority or 50,
     )
+    _apply_lesson_shape(les, body.blocks, body.allowed_room_ids)
     db.add(les)
     db.flush()
     for sid in section_ids:
@@ -999,8 +1111,7 @@ def create_lesson(body: LessonIn, db: Session = Depends(get_db), user=Depends(re
     if body.room_resource_id and body.room_resource_id not in room_ids:
         room_ids.append(body.room_resource_id)
     for rid in teacher_ids:
-        if not db.get(models.Resource, rid):
-            raise HTTPException(400, "Teacher not found. Add it on the School tab first.")
+        _require_active_teacher(db, rid)
         db.add(models.LessonResource(lesson_id=les.id, resource_id=rid, role="required"))
     for rid in room_ids:
         if not db.get(models.Resource, rid):
@@ -1047,6 +1158,7 @@ def _duplicate_lesson(db: Session, src: models.Lesson, target_section_id: str) -
         lesson_type=src.lesson_type or "theory",
         required_room_type=src.required_room_type,
         priority=src.priority or 50,
+        blocks=list(src.blocks or []) or None,
     )
     db.add(clone)
     db.flush()
@@ -1056,8 +1168,44 @@ def _duplicate_lesson(db: Session, src: models.Lesson, target_section_id: str) -
     return clone
 
 
+def _delete_lesson_row(db: Session, les: models.Lesson) -> None:
+    db.query(models.LessonAllocation).filter_by(lesson_id=les.id).delete()
+    db.query(models.LessonResource).filter_by(lesson_id=les.id).delete()
+    db.query(models.LessonSection).filter_by(lesson_id=les.id).delete()
+    db.query(models.LessonGroup).filter_by(lesson_id=les.id).delete()
+    db.query(models.LessonBandMember).filter_by(lesson_id=les.id).delete()
+    db.delete(les)
+
+
+def _sync_lesson_from_source(db: Session, src: models.Lesson, dest: models.Lesson) -> None:
+    """Copy staff and shape from source onto an existing same-subject lesson."""
+    dest.week_pattern_id = src.week_pattern_id
+    dest.term_id = src.term_id
+    dest.duration_periods = src.duration_periods
+    dest.frequency_per_week = src.frequency_per_week
+    dest.lesson_type = src.lesson_type or "theory"
+    dest.required_room_type = src.required_room_type
+    dest.priority = src.priority or 50
+    dest.blocks = list(src.blocks or []) or None
+    db.query(models.LessonResource).filter_by(lesson_id=dest.id).delete()
+    for lr in src.resources or []:
+        db.add(models.LessonResource(lesson_id=dest.id, resource_id=lr.resource_id, role=lr.role or "required"))
+
+
+def _teacher_key(les: models.Lesson) -> tuple:
+    return tuple(
+        sorted(
+            lr.resource_id
+            for lr in (les.resources or [])
+            if lr.resource_id and getattr(getattr(lr, "resource", None), "type", "teacher") == "teacher"
+        )
+    )
+
+
 @router.post("/lessons/clone")
 def clone_lessons(body: LessonCloneIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    from app.services.lesson_clone import section_ids_of
+
     targets = [sid for sid in (body.target_section_ids or []) if sid]
     if not targets:
         raise HTTPException(400, "Choose at least one class to clone into.")
@@ -1068,7 +1216,7 @@ def clone_lessons(body: LessonCloneIn, db: Session = Depends(get_db), user=Depen
     all_lessons = (
         db.query(models.Lesson)
         .options(
-            joinedload(models.Lesson.resources),
+            joinedload(models.Lesson.resources).joinedload(models.LessonResource.resource),
             joinedload(models.Lesson.section_links).joinedload(models.LessonSection.section),
             joinedload(models.Lesson.section),
         )
@@ -1083,6 +1231,7 @@ def clone_lessons(body: LessonCloneIn, db: Session = Depends(get_db), user=Depen
         if grid_id and src.time_grid_id != grid_id:
             raise HTTPException(400, "That lesson is not on the selected template.")
         sources = [src]
+        section_clone = False
     elif body.source_section_id:
         if not db.get(models.Section, body.source_section_id):
             raise HTTPException(400, "Source class not found.")
@@ -1092,34 +1241,86 @@ def clone_lessons(body: LessonCloneIn, db: Session = Depends(get_db), user=Depen
         targets = [sid for sid in targets if sid != body.source_section_id]
         if not targets:
             raise HTTPException(400, "Choose a different class to clone into.")
+        section_clone = True
     else:
         raise HTTPException(400, "Pick a source class or a lesson to clone.")
 
     created = 0
+    updated = 0
+    removed = 0
     skipped_joined = 0
     skipped_existing = 0
+
+    # Class → class: replace each source subject on the target (keeps split loads like Dance 2+3).
+    if section_clone:
+        solo = [s for s in sources if len(section_ids_of(s)) == 1]
+        skipped_joined = len(sources) - len(solo)
+        source_subjects = {s.subject_id for s in solo}
+        for sid in targets:
+            doomed = [
+                les
+                for les in covering_section(all_lessons, sid, grid_id)
+                if les.subject_id in source_subjects and len(section_ids_of(les)) == 1
+            ]
+            for les in doomed:
+                _delete_lesson_row(db, les)
+                removed += 1
+            db.flush()
+            for src in solo:
+                _duplicate_lesson(db, src, sid)
+                created += 1
+        db.commit()
+        return {
+            "ok": True,
+            "created": created,
+            "updated": updated,
+            "removed": removed,
+            "skipped_joined": skipped_joined,
+            "skipped_existing": skipped_existing,
+        }
+
     existing_by_target = {sid: existing_keys(all_lessons, sid, grid_id) for sid in targets}
+    used_dest: set[str] = set()
 
     for src in sources:
-        joined = False
+        if len(section_ids_of(src)) > 1:
+            skipped_joined += 1
+            continue
         for sid in targets:
             decision = clone_decision(src, sid, existing_by_target.get(sid, set()), body.skip_existing)
-            if decision == "joined":
-                joined = True
-                break
-            if decision == "existing":
-                skipped_existing += 1
+            if decision == "self":
+                continue
+            if decision == "update":
+                # Prefer same staff share; else first unused same-subject row.
+                dest = None
+                for les in covering_section(all_lessons, sid, grid_id):
+                    if les.id in used_dest:
+                        continue
+                    if les.subject_id != src.subject_id:
+                        continue
+                    if _teacher_key(les) == _teacher_key(src):
+                        dest = les
+                        break
+                    if dest is None:
+                        dest = les
+                if not dest:
+                    _duplicate_lesson(db, src, sid)
+                    created += 1
+                    continue
+                _sync_lesson_from_source(db, src, dest)
+                used_dest.add(dest.id)
+                updated += 1
                 continue
             _duplicate_lesson(db, src, sid)
             existing_by_target.setdefault(sid, set()).add((src.subject_id, src.time_grid_id))
             created += 1
-        if joined:
-            skipped_joined += 1
 
     db.commit()
     return {
         "ok": True,
         "created": created,
+        "updated": updated,
+        "removed": removed,
         "skipped_joined": skipped_joined,
         "skipped_existing": skipped_existing,
     }
@@ -1131,7 +1332,9 @@ def update_lesson(lesson_id: str, body: LessonPatch, db: Session = Depends(get_d
     if not les:
         raise HTTPException(404, "Lesson not found")
     if body.subject_id:
-        if not db.get(models.Subject, body.subject_id):
+        if body.subject_id != les.subject_id:
+            _require_active_subject(db, body.subject_id)
+        elif not db.get(models.Subject, body.subject_id):
             raise HTTPException(400, "Subject not found. Add it on the School tab first.")
         les.subject_id = body.subject_id
         db.expire(les, ["subject"])
@@ -1141,9 +1344,15 @@ def update_lesson(lesson_id: str, body: LessonPatch, db: Session = Depends(get_d
     if section_ids is not None:
         if not section_ids:
             raise HTTPException(400, "Choose at least one class.")
+        current_sections = {link.section_id for link in db.query(models.LessonSection).filter_by(lesson_id=les.id).all()}
+        if les.section_id:
+            current_sections.add(les.section_id)
         for sid in section_ids:
-            if not db.get(models.Section, sid):
-                raise HTTPException(400, "Section not found. Add it on the School tab first.")
+            if sid in current_sections:
+                if not db.get(models.Section, sid):
+                    raise HTTPException(400, "Section not found. Add it on the School tab first.")
+            else:
+                _require_active_section(db, sid)
         db.query(models.LessonSection).filter_by(lesson_id=les.id).delete()
         les.section_id = section_ids[0]
         for sid in section_ids:
@@ -1174,6 +1383,10 @@ def update_lesson(lesson_id: str, body: LessonPatch, db: Session = Depends(get_d
         les.frequency_per_week = new_freq
     if body.week_pattern_id is not None:
         les.week_pattern_id = body.week_pattern_id or None
+    if body.blocks is not None:
+        _apply_lesson_shape(les, body.blocks, None)
+    if body.allowed_room_ids is not None:
+        les.allowed_room_ids = [rid for rid in body.allowed_room_ids if rid]
     if body.required_room_type is not None:
         les.required_room_type = body.required_room_type or None
     if body.priority is not None:
@@ -1182,6 +1395,14 @@ def update_lesson(lesson_id: str, body: LessonPatch, db: Session = Depends(get_d
     if teacher_ids is None and body.teacher_resource_id:
         teacher_ids = [body.teacher_resource_id]
     if teacher_ids is not None:
+        current = {
+            lr.resource_id
+            for lr in les.resources
+            if lr.resource and lr.resource.type == "teacher"
+        }
+        for rid in teacher_ids:
+            if rid not in current:
+                _require_active_teacher(db, rid)
         _set_typed_resources(db, les.id, teacher_ids, "teacher")
     room_ids = list(body.room_resource_ids) if body.room_resource_ids is not None else None
     if room_ids is None and body.room_resource_id is not None:
@@ -1410,19 +1631,36 @@ def constraints_grid(kind: str, target_id: str, db: Session = Depends(get_db), u
         return teacher_grid(db, target_id)
     if kind in ("section", "class"):
         return class_grid(db, target_id)
-    raise HTTPException(400, "kind must be teacher or section")
+    if kind == "subject":
+        from app.services.constraint_paint import slot_rule_grid
+
+        return slot_rule_grid(db, "SubjectUnavailable", "subject", target_id)
+    if kind == "room":
+        from app.services.constraint_paint import slot_rule_grid
+
+        return slot_rule_grid(db, "RoomUnavailable", "room", target_id)
+    raise HTTPException(400, "kind must be teacher, section, subject, or room")
 
 
 @router.post("/constraints/paint")
 def constraints_paint(body: ConstraintPaintIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_template(db)
     kind = (body.kind or "").lower()
     try:
         if kind == "teacher":
             mode = paint_teacher(db, body.id, body.day_id, body.period_id, body.mode)
         elif kind in ("section", "class"):
             mode = paint_class(db, body.id, body.day_id, body.period_id, body.mode)
+        elif kind == "subject":
+            from app.services.constraint_paint import paint_subject
+
+            mode = paint_subject(db, body.id, body.day_id, body.period_id, body.mode)
+        elif kind == "room":
+            from app.services.constraint_paint import paint_room
+
+            mode = paint_room(db, body.id, body.day_id, body.period_id, body.mode)
         else:
-            raise ValueError("kind must be teacher or section")
+            raise ValueError("kind must be teacher, section, subject, or room")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     db.add(
@@ -1493,6 +1731,7 @@ def list_constraints(db: Session = Depends(get_db), user=Depends(get_current_use
 
 @router.post("/constraints")
 def create_constraint(body: ConstraintIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
+    _require_template(db)
     if not db.get(models.ConstraintType, body.type_code):
         raise HTTPException(400, "Unknown constraint type")
     try:
@@ -1533,6 +1772,8 @@ def replace_staff(body: ReplaceStaffIn, db: Session = Depends(get_db), user=Depe
     src = db.query(models.Teacher).filter_by(resource_id=body.from_resource_id).first()
     if not dest or not src:
         raise HTTPException(400, "Both staff must exist.")
+    if dest.resource and dest.resource.is_active is False:
+        raise HTTPException(400, "That teacher is inactive. Pick an active teacher.")
     changed = 0
     rows = db.query(models.LessonResource).filter_by(resource_id=body.from_resource_id).all()
     for lr in rows:

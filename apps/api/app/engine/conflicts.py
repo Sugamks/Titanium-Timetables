@@ -170,6 +170,52 @@ def allocation_conflicts(db: Session, version_id: str, candidate: dict, ignore_i
             if quals and not any(q.qualified for q in quals):
                 issues.append({"code": "qualification", "ok": False, "label": f"{tres.name} is not qualified for this subject"})
 
+    from app.engine.occupancy import (
+        lesson_blocks,
+        lesson_section_ids,
+        max_cards_per_day,
+        subject_section_card_totals,
+    )
+
+    grid_id = version.timetable.time_grid_id if version.timetable else None
+    day_count = (
+        db.query(models.Day).filter_by(time_grid_id=grid_id).count() if grid_id else 0
+    )
+    section_ids_here = lesson_section_ids(lesson)
+    grid_lessons = (
+        db.query(models.Lesson).filter(models.Lesson.time_grid_id == grid_id).all()
+        if grid_id
+        else db.query(models.Lesson).all()
+    )
+    bundle_need = subject_section_card_totals(grid_lessons)
+    max_pd = max(
+        (max_cards_per_day(bundle_need.get((lesson.subject_id, sid), len(lesson_blocks(lesson))), day_count) for sid in section_ids_here),
+        default=max_cards_per_day(len(lesson_blocks(lesson)), day_count),
+    )
+    same_day = [
+        a
+        for a in db.query(models.LessonAllocation).filter_by(version_id=version_id, day_id=candidate["day_id"]).all()
+        if (not ignore_id or a.id != ignore_id)
+        and a.lesson
+        and a.lesson.subject_id == lesson.subject_id
+        and set(lesson_section_ids(a.lesson)) & set(section_ids_here)
+    ]
+    already = len(same_day)
+    if already >= max_pd:
+        issues.append(
+            {
+                "code": "per_day",
+                "ok": False,
+                "label": (
+                    "This subject already has a period that day for the class"
+                    if max_pd == 1
+                    else f"This subject already has {already} periods that day for the class (max {max_pd})"
+                ),
+            }
+        )
+    else:
+        issues.append({"code": "per_day", "ok": True, "label": "Day spread ok"})
+
     return issues
 
 

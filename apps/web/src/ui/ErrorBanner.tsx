@@ -13,9 +13,9 @@ export default function ErrorBanner({
  return (
  <div
  role="alert"
- className={`flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 ${className}`}
+ className={`pop-in flex items-center gap-2 rounded-lg border border-error bg-error-well px-3 py-2.5 text-sm text-error ${className}`}
  >
- <p className="flex-1 min-w-0">{message}</p>
+ <p className="flex-1 min-w-0 leading-snug m-0">{message}</p>
  <IconButton icon="close" label="Clear" variant="danger" onClick={onClear} />
  </div>
  );

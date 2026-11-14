@@ -34,7 +34,7 @@ export default function SaveFileButton({ yearId, templateId }: { yearId: string;
       if (r.cancelled || !r.path) return;
       setPath(r.path);
       setShowPath(false);
-      toast("Saved");
+      toast("Saved this year's timetable file.");
     } catch (err: any) {
       toast(err.message || "Save failed");
     } finally {
@@ -46,7 +46,7 @@ export default function SaveFileButton({ yearId, templateId }: { yearId: string;
     <div className="relative flex shrink-0 items-center gap-1">
       <button
         type="button"
-        className="h-10 px-3 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+        className="h-10 px-3 bg-accent text-accent-ink rounded-lg text-sm disabled:opacity-55"
         disabled={busy}
         title="Choose where to write year-template.ttl"
         onClick={save}
@@ -61,7 +61,7 @@ export default function SaveFileButton({ yearId, templateId }: { yearId: string;
         />
       )}
       {showPath && path && (
-        <p className="absolute right-0 top-full z-20 mt-1 w-64 break-all rounded-lg border bg-white px-2 py-1 text-xs text-slate-700 shadow">
+        <p className="absolute right-0 top-full z-20 mt-1 w-64 break-all rounded-lg border bg-paper-3 px-2 py-1 text-xs text-ink shadow">
           {path}
         </p>
       )}

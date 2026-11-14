@@ -49,6 +49,52 @@ def _hard(instance) -> bool:
     return (instance.severity or "soft") == "hard"
 
 
+def _rule_name(instance, fallback: str) -> str:
+    code = getattr(instance, "type_code", None) or fallback
+    return str(code)
+
+
+def _assume_hard(ctx, instance, label: str):
+    if not _hard(instance):
+        return None
+    assume = getattr(ctx, "assume", None)
+    if not assume:
+        return None
+    return assume(label)
+
+
+def _ban(ctx, instance, var, lit, label: str) -> None:
+    if lit is not None:
+        ctx.model.Add(var == 0).OnlyEnforceIf(lit)
+        return
+    if _hard(instance):
+        ctx.model.Add(var == 0)
+        return
+    penalize = getattr(ctx, "penalize", None)
+    if penalize:
+        penalize(var, _weight(instance), label)
+    else:
+        ctx.penalties.append(var * _weight(instance))
+
+
+def _cap(ctx, instance, terms, limit: int, label: str, lit) -> None:
+    if not terms:
+        return
+    if lit is not None:
+        ctx.model.Add(sum(terms) <= limit).OnlyEnforceIf(lit)
+        return
+    if _hard(instance):
+        ctx.model.Add(sum(terms) <= limit)
+        return
+    over = ctx.model.NewIntVar(0, max(len(terms), limit, 1), f"over{len(ctx.penalties)}")
+    ctx.model.Add(sum(terms) - limit <= over)
+    penalize = getattr(ctx, "penalize", None)
+    if penalize:
+        penalize(over, _weight(instance), label)
+    else:
+        ctx.penalties.append(over * _weight(instance))
+
+
 def _slot_hit(instance, day_id, period_ids) -> bool:
     params = instance.params or {}
     slots = params.get("slots") or []
@@ -109,6 +155,8 @@ class UnavailableBase(ConstraintHandler):
         return self._resource_match(instance, lesson)
 
     def apply(self, ctx, instance):
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         for key, var in list(ctx.x.items()):
             meta = ctx.var_meta[key]
             lesson = ctx.lesson_map[key[0]]
@@ -118,10 +166,7 @@ class UnavailableBase(ConstraintHandler):
                 continue
             if not self._resource_match(instance, lesson, meta.get("tokens")):
                 continue
-            if _hard(instance):
-                ctx.model.Add(var == 0)
-            else:
-                ctx.penalties.append(var * _weight(instance))
+            _ban(ctx, instance, var, lit, label)
 
 
 class TeacherUnavailable(UnavailableBase):
@@ -141,6 +186,24 @@ class RoomUnavailable(UnavailableBase):
     resource_prefix = "room"
 
 
+class SubjectUnavailable(UnavailableBase):
+    code = "SubjectUnavailable"
+    resource_prefix = "subject"
+
+    def _resource_match(self, instance, lesson, tokens=None) -> bool:
+        scope_id = instance.scope_id
+        if not scope_id:
+            return True
+        return lesson.subject_id == scope_id
+
+    def explain(self, instance, context=None):
+        return {
+            "summary": "Subject cannot be scheduled in blocked slots",
+            "facts": [f"Blocked: {instance.params}"],
+            "suggested_fixes": ["Open one blocked period", "Move the lesson"],
+        }
+
+
 class ClassUnavailable(UnavailableBase):
     code = "ClassUnavailable"
     resource_prefix = "section-whole"
@@ -157,6 +220,8 @@ class MaxTeacherLessonsPerDay(ConstraintHandler):
     def apply(self, ctx, instance):
         mx = int((instance.params or {}).get("max") or 6)
         rid = instance.scope_id
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         for day in ctx.days:
             vars_ = []
             for key, var in ctx.x.items():
@@ -167,14 +232,7 @@ class MaxTeacherLessonsPerDay(ConstraintHandler):
                 if rid and rid not in [t.id for t in lesson_teachers(lesson)]:
                     continue
                 vars_.append(var)
-            if not vars_:
-                continue
-            if _hard(instance):
-                ctx.model.Add(sum(vars_) <= mx)
-            else:
-                over = ctx.model.NewIntVar(0, len(vars_), f"maxday_{day.id[:8]}")
-                ctx.model.Add(sum(vars_) - mx <= over)
-                ctx.penalties.append(over * _weight(instance))
+            _cap(ctx, instance, vars_, mx, label, lit)
 
 
 class MaxConsecutiveLessons(ConstraintHandler):
@@ -197,6 +255,8 @@ class MaxConsecutiveLessons(ConstraintHandler):
         )
         teaching = ctx.teaching
         win = mx + 1
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         for teacher_id in teacher_ids:
             for day in ctx.days:
                 for i in range(0, max(0, len(teaching) - mx)):
@@ -205,13 +265,44 @@ class MaxConsecutiveLessons(ConstraintHandler):
                     for p in window:
                         for lane in ("A", "B"):
                             vars_.extend(ctx.occupy.get((f"teacher:{teacher_id}", day.id, p.id, lane), []))
-                    if vars_:
-                        if _hard(instance):
-                            ctx.model.Add(sum(vars_) <= mx)
-                        else:
-                            over = ctx.model.NewIntVar(0, len(vars_), f"cons_{day.id[:6]}_{i}")
-                            ctx.model.Add(sum(vars_) - mx <= over)
-                            ctx.penalties.append(over * _weight(instance))
+                    _cap(ctx, instance, vars_, mx, label, lit)
+
+
+def _period_bits(ctx, token: str, day_id: str, prefix: str):
+    bits = []
+    n = len(ctx.teaching)
+    for i, period in enumerate(ctx.teaching):
+        vlist = []
+        for lane in ("A", "B"):
+            vlist.extend(ctx.occupy.get((token, day_id, period.id, lane), []))
+        bit = ctx.model.NewBoolVar(f"{prefix}_{i}_{n}_{day_id[:4]}")
+        if vlist:
+            ctx.model.Add(sum(vlist) >= 1).OnlyEnforceIf(bit)
+            ctx.model.Add(sum(vlist) == 0).OnlyEnforceIf(bit.Not())
+        else:
+            ctx.model.Add(bit == 0)
+        bits.append(bit)
+    return bits
+
+
+def _window_holes(ctx, bits, prefix: str):
+    n = len(bits)
+    active = ctx.model.NewBoolVar(f"{prefix}_on")
+    ctx.model.Add(sum(bits) >= 1).OnlyEnforceIf(active)
+    ctx.model.Add(sum(bits) == 0).OnlyEnforceIf(active.Not())
+    last_i = max(0, n - 1)
+    first = ctx.model.NewIntVar(0, last_i, f"{prefix}_first")
+    last = ctx.model.NewIntVar(0, last_i, f"{prefix}_last")
+    for i, bit in enumerate(bits):
+        ctx.model.Add(first <= i).OnlyEnforceIf(bit)
+        ctx.model.Add(last >= i).OnlyEnforceIf(bit)
+    span = ctx.model.NewIntVar(0, n, f"{prefix}_span")
+    ctx.model.Add(span == last - first + 1).OnlyEnforceIf(active)
+    ctx.model.Add(span == 0).OnlyEnforceIf(active.Not())
+    holes = ctx.model.NewIntVar(0, n, f"{prefix}_holes")
+    ctx.model.Add(holes == span - sum(bits)).OnlyEnforceIf(active)
+    ctx.model.Add(holes == 0).OnlyEnforceIf(active.Not())
+    return holes
 
 
 class MaxTeacherWindows(ConstraintHandler):
@@ -223,38 +314,255 @@ class MaxTeacherWindows(ConstraintHandler):
         return p
 
     def apply(self, ctx, instance):
-        # Soft: penalize gaps between first and last period.
+        # (last - first + 1) - occupied <= max. Empty days are free.
         rid = instance.scope_id
         mx = int((instance.params or {}).get("max") or 2)
         if not rid:
             return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         n = len(ctx.teaching)
+        if n == 0:
+            return
         for day in ctx.days:
-            occupied = []
-            for i, p in enumerate(ctx.teaching):
-                vlist = []
-                for lane in ("A", "B"):
-                    vlist.extend(ctx.occupy.get((f"teacher:{rid}", day.id, p.id, lane), []))
-                if vlist:
-                    bit = ctx.model.NewBoolVar(f"tw_{day.id[:6]}_{i}")
-                    ctx.model.Add(sum(vlist) >= 1).OnlyEnforceIf(bit)
-                    ctx.model.Add(sum(vlist) == 0).OnlyEnforceIf(bit.Not())
-                    occupied.append(bit)
-            if len(occupied) < 2:
-                continue
-            gaps = ctx.model.NewIntVar(0, n, f"gaps_{day.id[:6]}")
-            # gaps approx: (last-first+1) - count; linearize loosely as n*span penalty
-            ctx.model.Add(sum(occupied) + gaps >= 0)
-            over = ctx.model.NewIntVar(0, n, f"gapo_{day.id[:6]}")
-            ctx.model.Add(gaps - mx <= over)
-            ctx.penalties.append(over * _weight(instance))
+            tag = f"win{rid[:4]}_{day.id[:4]}"
+            bits = _period_bits(ctx, f"teacher:{rid}", day.id, tag)
+            holes = _window_holes(ctx, bits, tag)
+            _cap(ctx, instance, [holes], mx, label, lit)
 
 
 class MinTeacherWindows(ConstraintHandler):
     code = "MinTeacherWindows"
 
+    def validate_params(self, params):
+        p = params or {}
+        if p.get("min") is None and p.get("max") is not None:
+            p["min"] = p["max"]
+        p.setdefault("min", 1)
+        return p
+
     def apply(self, ctx, instance):
-        return
+        # Working day (has at least one lesson) must keep at least N holes in the span.
+        rid = instance.scope_id
+        mn = int((instance.params or {}).get("min") or (instance.params or {}).get("max") or 1)
+        if not rid:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        if not ctx.teaching:
+            return
+        for day in ctx.days:
+            tag = f"minwin{rid[:4]}_{day.id[:4]}"
+            bits = _period_bits(ctx, f"teacher:{rid}", day.id, tag)
+            holes = _window_holes(ctx, bits, tag)
+            active = ctx.model.NewBoolVar(f"{tag}_on")
+            ctx.model.Add(sum(bits) >= 1).OnlyEnforceIf(active)
+            ctx.model.Add(sum(bits) == 0).OnlyEnforceIf(active.Not())
+            if lit is not None:
+                ctx.model.Add(holes >= mn).OnlyEnforceIf([active, lit])
+            elif _hard(instance):
+                ctx.model.Add(holes >= mn).OnlyEnforceIf(active)
+            else:
+                short = ctx.model.NewIntVar(0, max(mn, 1), f"{tag}_short")
+                ctx.model.Add(short >= mn - holes).OnlyEnforceIf(active)
+                ctx.model.Add(short == 0).OnlyEnforceIf(active.Not())
+                if hasattr(ctx, "penalize"):
+                    ctx.penalize(short, _weight(instance), label)
+                else:
+                    ctx.penalties.append(short * _weight(instance))
+
+
+def _teacher_ids(ctx, instance) -> list[str]:
+    rid = instance.scope_id
+    if rid:
+        return [rid]
+    found = set()
+    for lesson in ctx.lessons:
+        for teacher in lesson_teachers(lesson):
+            found.add(teacher.id)
+    return sorted(found)
+
+
+def _day_count(ctx, token: str, day, prefix: str):
+    vars_ = []
+    for key, var in ctx.x.items():
+        if key[2] != day.id:
+            continue
+        if token in (ctx.var_meta[key].get("tokens") or set()):
+            vars_.append(var)
+    return vars_
+
+
+class MaxDaysPerWeek(ConstraintHandler):
+    code = "MaxDaysPerWeek"
+
+    def validate_params(self, params):
+        p = params or {}
+        p.setdefault("max", 5)
+        return p
+
+    def apply(self, ctx, instance):
+        mx = int((instance.params or {}).get("max") or 5)
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        for rid in _teacher_ids(ctx, instance):
+            day_on = []
+            for day in ctx.days:
+                vars_ = _day_count(ctx, f"teacher:{rid}", day, rid)
+                if not vars_:
+                    continue
+                bit = ctx.model.NewBoolVar(f"md{rid[:4]}_{day.id[:4]}")
+                ctx.model.Add(sum(vars_) >= 1).OnlyEnforceIf(bit)
+                ctx.model.Add(sum(vars_) == 0).OnlyEnforceIf(bit.Not())
+                day_on.append(bit)
+            _cap(ctx, instance, day_on, mx, label, lit)
+
+
+class MinLessonsPerDay(ConstraintHandler):
+    code = "MinLessonsPerDay"
+
+    def validate_params(self, params):
+        p = params or {}
+        p.setdefault("min", 2)
+        return p
+
+    def apply(self, ctx, instance):
+        mn = int((instance.params or {}).get("min") or (instance.params or {}).get("max") or 2)
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        for rid in _teacher_ids(ctx, instance):
+            for day in ctx.days:
+                vars_ = _day_count(ctx, f"teacher:{rid}", day, rid)
+                if not vars_:
+                    continue
+                active = ctx.model.NewBoolVar(f"mind{rid[:4]}_{day.id[:4]}")
+                ctx.model.Add(sum(vars_) >= 1).OnlyEnforceIf(active)
+                ctx.model.Add(sum(vars_) == 0).OnlyEnforceIf(active.Not())
+                if lit is not None or _hard(instance):
+                    gate = lit
+                    if gate is None:
+                        ctx.model.Add(sum(vars_) >= mn).OnlyEnforceIf(active)
+                    else:
+                        ctx.model.Add(sum(vars_) >= mn).OnlyEnforceIf([active, gate])
+                else:
+                    short = ctx.model.NewIntVar(0, mn, f"short{rid[:4]}_{day.id[:4]}")
+                    ctx.model.Add(short >= mn - sum(vars_)).OnlyEnforceIf(active)
+                    ctx.model.Add(short == 0).OnlyEnforceIf(active.Not())
+                    ctx.penalize(short, _weight(instance), label) if hasattr(ctx, "penalize") else ctx.penalties.append(short * _weight(instance))
+
+
+class LunchBreak(ConstraintHandler):
+    code = "LunchBreak"
+
+    def apply(self, ctx, instance):
+        params = instance.params or {}
+        wanted = set(params.get("period_ids") or [])
+        if not wanted:
+            wanted = _lunch_teaching_ids(ctx)
+        if not wanted:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        window = [p for p in ctx.teaching if p.id in wanted]
+        if not window:
+            return
+        for rid in _teacher_ids(ctx, instance):
+            for day in ctx.days:
+                bits = []
+                for period in window:
+                    vlist = []
+                    for lane in ("A", "B"):
+                        vlist.extend(ctx.occupy.get((f"teacher:{rid}", day.id, period.id, lane), []))
+                    bit = ctx.model.NewBoolVar(f"lun{rid[:3]}_{day.id[:3]}_{period.sort_order}")
+                    if vlist:
+                        ctx.model.Add(sum(vlist) >= 1).OnlyEnforceIf(bit)
+                        ctx.model.Add(sum(vlist) == 0).OnlyEnforceIf(bit.Not())
+                    else:
+                        ctx.model.Add(bit == 0)
+                    bits.append(bit)
+                works = _day_count(ctx, f"teacher:{rid}", day, rid)
+                if not works or not bits:
+                    continue
+                active = ctx.model.NewBoolVar(f"lunon{rid[:3]}_{day.id[:3]}")
+                ctx.model.Add(sum(works) >= 1).OnlyEnforceIf(active)
+                ctx.model.Add(sum(works) == 0).OnlyEnforceIf(active.Not())
+                free = ctx.model.NewIntVar(0, len(bits), f"lunf{rid[:3]}_{day.id[:3]}")
+                ctx.model.Add(free == len(bits) - sum(bits))
+                if lit is not None:
+                    ctx.model.Add(free >= 1).OnlyEnforceIf([active, lit])
+                elif _hard(instance):
+                    ctx.model.Add(free >= 1).OnlyEnforceIf(active)
+                else:
+                    miss = ctx.model.NewBoolVar(f"lunm{rid[:3]}_{day.id[:3]}")
+                    ctx.model.Add(free == 0).OnlyEnforceIf(miss)
+                    ctx.model.Add(free >= 1).OnlyEnforceIf(miss.Not())
+                    both = ctx.model.NewBoolVar(f"lunb{rid[:3]}_{day.id[:3]}")
+                    ctx.model.AddBoolAnd([active, miss]).OnlyEnforceIf(both)
+                    ctx.model.AddBoolOr([active.Not(), miss.Not(), both.Not()])
+                    if hasattr(ctx, "penalize"):
+                        ctx.penalize(both, _weight(instance), label)
+                    else:
+                        ctx.penalties.append(both * _weight(instance))
+
+
+def _lunch_teaching_ids(ctx) -> set[str]:
+    periods = getattr(ctx, "periods", None) or []
+    lunch = [p for p in periods if (getattr(p, "period_type", "") or "") == "lunch_break"]
+    if not lunch:
+        return set()
+    ids = set()
+    teaching = list(ctx.teaching)
+    for br in lunch:
+        before = [p for p in teaching if p.sort_order < br.sort_order]
+        after = [p for p in teaching if p.sort_order > br.sort_order]
+        if before:
+            ids.add(before[-1].id)
+        if after:
+            ids.add(after[0].id)
+    return ids
+
+
+class _PeriodBound(ConstraintHandler):
+    bound = "start"
+
+    def validate_params(self, params):
+        p = params or {}
+        if not p.get("period_id") and p.get("period") is None:
+            raise ValueError("Choose the period.")
+        return p
+
+    def apply(self, ctx, instance):
+        params = instance.params or {}
+        index = {p.id: i for i, p in enumerate(ctx.teaching)}
+        limit = index.get(params.get("period_id"))
+        if limit is None and params.get("period") is not None:
+            try:
+                limit = int(params.get("period")) - 1
+            except (TypeError, ValueError):
+                limit = None
+        if limit is None:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        for rid in _teacher_ids(ctx, instance):
+            for key, var in ctx.x.items():
+                lesson = ctx.lesson_map[key[0]]
+                if rid not in [t.id for t in lesson_teachers(lesson)]:
+                    continue
+                start = index.get(key[3], 0)
+                bad = start < limit if self.bound == "start" else start > limit
+                if bad:
+                    _ban(ctx, instance, var, lit, label)
+
+
+class StartAfter(_PeriodBound):
+    code = "StartAfter"
+    bound = "start"
+
+
+class EndBefore(_PeriodBound):
+    code = "EndBefore"
+    bound = "end"
 
 
 class ContractHours(ConstraintHandler):
@@ -382,17 +690,44 @@ class DifferentRoom(ConstraintHandler):
 
     def apply(self, ctx, instance):
         other = (instance.params or {}).get("other_lesson_id")
-        if not other:
+        room_of = getattr(ctx, "room_of", None) or {}
+        if not other or not room_of:
             return
-        # Soft: penalize same start slot
-        for key, var in ctx.x.items():
-            if key[0] != instance.scope_id and instance.scope != "lesson":
+        a_id = instance.scope_id if instance.scope == "lesson" else None
+        if not a_id:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        rooms = sorted({rid for (_key, rid) in room_of})
+        shared_flags = []
+        for rid in rooms:
+            a_vars = [var for (key, room_id), var in room_of.items() if key[0] == a_id and room_id == rid]
+            b_vars = [var for (key, room_id), var in room_of.items() if key[0] == other and room_id == rid]
+            if not a_vars or not b_vars:
                 continue
-            for key2, var2 in ctx.x.items():
-                if key2[0] != other:
-                    continue
-                if key[2] == key2[2] and key[3] == key2[3]:
-                    ctx.penalties.append((var + var2) * (_weight(instance) // 2))
+            a_on = ctx.model.NewBoolVar(f"dra{rid[:4]}")
+            b_on = ctx.model.NewBoolVar(f"drb{rid[:4]}")
+            ctx.model.Add(sum(a_vars) >= 1).OnlyEnforceIf(a_on)
+            ctx.model.Add(sum(a_vars) == 0).OnlyEnforceIf(a_on.Not())
+            ctx.model.Add(sum(b_vars) >= 1).OnlyEnforceIf(b_on)
+            ctx.model.Add(sum(b_vars) == 0).OnlyEnforceIf(b_on.Not())
+            both = ctx.model.NewBoolVar(f"drs{rid[:4]}")
+            ctx.model.AddBoolAnd([a_on, b_on]).OnlyEnforceIf(both)
+            ctx.model.AddBoolOr([a_on.Not(), b_on.Not(), both.Not()])
+            shared_flags.append(both)
+        if not shared_flags:
+            return
+        share = ctx.model.NewBoolVar("drshare")
+        ctx.model.Add(sum(shared_flags) >= 1).OnlyEnforceIf(share)
+        ctx.model.Add(sum(shared_flags) == 0).OnlyEnforceIf(share.Not())
+        if lit is not None:
+            ctx.model.Add(share == 0).OnlyEnforceIf(lit)
+        elif _hard(instance):
+            ctx.model.Add(share == 0)
+        elif hasattr(ctx, "penalize"):
+            ctx.penalize(share, _weight(instance), label)
+        else:
+            ctx.penalties.append(share * _weight(instance))
 
 
 class PairSlotBase(ConstraintHandler):
@@ -419,13 +754,23 @@ class LessonsTogether(PairSlotBase):
     code = "LessonsTogether"
 
     def apply(self, ctx, instance):
-        # Prefer same day
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         w = _weight(instance)
         for k1, v1, k2, v2 in self._pairs(ctx, instance):
-            if k1[2] != k2[2]:
-                both = ctx.model.NewBoolVar(f"tog_{k1[1]}_{k2[1]}")
-                ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
-                ctx.model.AddBoolOr([v1.Not(), v2.Not(), both.Not()])
+            if k1[2] == k2[2]:
+                continue
+            if lit is not None or _hard(instance):
+                clause = ctx.model.AddBoolOr([v1.Not(), v2.Not()])
+                if lit is not None:
+                    clause.OnlyEnforceIf(lit)
+                continue
+            both = ctx.model.NewBoolVar(f"tog{id(v1)}_{id(v2)}")
+            ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+            ctx.model.AddBoolOr([v1.Not(), v2.Not(), both.Not()])
+            if hasattr(ctx, "penalize"):
+                ctx.penalize(both, w, label)
+            else:
                 ctx.penalties.append(both * w)
 
 
@@ -450,11 +795,23 @@ class SameTime(PairSlotBase):
     code = "SameTime"
 
     def apply(self, ctx, instance):
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         w = _weight(instance)
         for k1, v1, k2, v2 in self._pairs(ctx, instance):
-            if k1[3] != k2[3]:
-                both = ctx.model.NewBoolVar(f"st_{k1[1]}_{k2[1]}")
-                ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+            if k1[3] == k2[3]:
+                continue
+            if lit is not None or _hard(instance):
+                clause = ctx.model.AddBoolOr([v1.Not(), v2.Not()])
+                if lit is not None:
+                    clause.OnlyEnforceIf(lit)
+                continue
+            both = ctx.model.NewBoolVar(f"st{id(v1)}_{id(v2)}")
+            ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+            ctx.model.AddBoolOr([v1.Not(), v2.Not(), both.Not()])
+            if hasattr(ctx, "penalize"):
+                ctx.penalize(both, w, label)
+            else:
                 ctx.penalties.append(both * w)
 
 
@@ -496,13 +853,25 @@ class Consecutive(PairSlotBase):
 
     def apply(self, ctx, instance):
         pidx = ctx.period_index
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
         w = _weight(instance)
         for k1, v1, k2, v2 in self._pairs(ctx, instance):
             same_day = k1[2] == k2[2]
             adj = abs(pidx.get(k1[3], 0) - pidx.get(k2[3], 0)) == 1
-            if not (same_day and adj):
-                both = ctx.model.NewBoolVar(f"cn_{k1[1]}_{k2[1]}")
-                ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+            if same_day and adj:
+                continue
+            if lit is not None or _hard(instance):
+                clause = ctx.model.AddBoolOr([v1.Not(), v2.Not()])
+                if lit is not None:
+                    clause.OnlyEnforceIf(lit)
+                continue
+            both = ctx.model.NewBoolVar(f"cn{id(v1)}_{id(v2)}")
+            ctx.model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+            ctx.model.AddBoolOr([v1.Not(), v2.Not(), both.Not()])
+            if hasattr(ctx, "penalize"):
+                ctx.penalize(both, w, label)
+            else:
                 ctx.penalties.append(both * w)
 
 
@@ -510,18 +879,34 @@ class SubjectDistribution(ConstraintHandler):
     code = "SubjectDistribution"
 
     def apply(self, ctx, instance):
-        # Prefer spreading a subject's occurrences across different days.
+        # Two blocks of the same subject for the same class on one day.
+        from app.engine.occupancy import lesson_section_ids
+
         w = _weight(instance)
-        by_lesson_day = {}
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        by_day = {}
         for key, var in ctx.x.items():
             lesson = ctx.lesson_map[key[0]]
             if instance.scope == "subject" and instance.scope_id and lesson.subject_id != instance.scope_id:
                 continue
-            by_lesson_day.setdefault((key[0], key[2]), []).append(var)
-        for (_lid, _day), vars_ in by_lesson_day.items():
-            if len(vars_) >= 2:
-                extra = ctx.model.NewIntVar(0, len(vars_), f"dist_{_lid[:6]}")
-                ctx.model.Add(sum(vars_) - 1 <= extra)
+            if instance.scope == "section" and instance.scope_id:
+                if instance.scope_id not in lesson_section_ids(lesson):
+                    continue
+            for sid in lesson_section_ids(lesson) or [""]:
+                by_day.setdefault((lesson.subject_id, sid, key[2]), []).append(var)
+        for (subject_id, sid, day_id), vars_ in by_day.items():
+            if len(vars_) < 2:
+                continue
+            extra = ctx.model.NewIntVar(0, len(vars_), f"dist_{subject_id[:4]}_{day_id[:4]}")
+            ctx.model.Add(sum(vars_) - 1 <= extra)
+            if lit is not None:
+                ctx.model.Add(extra == 0).OnlyEnforceIf(lit)
+            elif _hard(instance):
+                ctx.model.Add(extra == 0)
+            elif hasattr(ctx, "penalize"):
+                ctx.penalize(extra, w, label)
+            else:
                 ctx.penalties.append(extra * w)
 
 
@@ -661,6 +1046,99 @@ class ClassTeacherOnlyInPeriods(ClassTeacherSlotRule):
         return any(tid != ct for tid in teachers)
 
 
+class SameRoomAllWeek(ConstraintHandler):
+    code = "SameRoomAllWeek"
+
+    def apply(self, ctx, instance):
+        room_of = getattr(ctx, "room_of", None) or {}
+        if not room_of:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        lessons = [l for l in ctx.lessons if self.applies_to_lesson(instance, l, ctx)]
+        for lesson in lessons:
+            by_room: dict[str, list] = {}
+            for (key, rid), var in room_of.items():
+                if key[0] == lesson.id:
+                    by_room.setdefault(rid, []).append(var)
+            if len(by_room) < 2:
+                continue
+            chosen = []
+            for rid, vars_ in by_room.items():
+                bit = ctx.model.NewBoolVar(f"sr{lesson.id[:4]}_{rid[:4]}")
+                ctx.model.Add(sum(vars_) >= 1).OnlyEnforceIf(bit)
+                ctx.model.Add(sum(vars_) == 0).OnlyEnforceIf(bit.Not())
+                chosen.append(bit)
+            if lit is not None:
+                ctx.model.Add(sum(chosen) <= 1).OnlyEnforceIf(lit)
+            elif _hard(instance):
+                ctx.model.Add(sum(chosen) <= 1)
+            else:
+                extra = ctx.model.NewIntVar(0, len(chosen), f"sre{lesson.id[:4]}")
+                ctx.model.Add(sum(chosen) - 1 <= extra)
+                if hasattr(ctx, "penalize"):
+                    ctx.penalize(extra, _weight(instance), label)
+                else:
+                    ctx.penalties.append(extra * _weight(instance))
+
+
+class _RoomTypeCount(ConstraintHandler):
+    sense = "min"
+
+    def validate_params(self, params):
+        p = params or {}
+        if not (p.get("room_type") or "").strip():
+            raise ValueError("Choose a room type.")
+        p["room_type"] = str(p["room_type"]).strip()
+        p["min"] = int(p.get("min") or p.get("max") or 1)
+        p["max"] = int(p.get("max") or p.get("min") or 1)
+        return p
+
+    def apply(self, ctx, instance):
+        room_of = getattr(ctx, "room_of", None) or {}
+        rooms = {r.resource_id: r for r in (getattr(ctx, "rooms", None) or [])}
+        want = ((instance.params or {}).get("room_type") or "").strip()
+        if not room_of or not want:
+            return
+        label = _rule_name(instance, self.code)
+        lit = _assume_hard(ctx, instance, label)
+        limit = int((instance.params or {}).get("min" if self.sense == "min" else "max") or 1)
+        for lesson in [l for l in ctx.lessons if self.applies_to_lesson(instance, l, ctx)]:
+            vars_ = []
+            for (key, rid), var in room_of.items():
+                if key[0] != lesson.id:
+                    continue
+                room = rooms.get(rid)
+                if room and (room.room_type or "") == want:
+                    vars_.append(var)
+            if not vars_:
+                continue
+            if self.sense == "max":
+                _cap(ctx, instance, vars_, limit, label, lit)
+                continue
+            if lit is not None:
+                ctx.model.Add(sum(vars_) >= limit).OnlyEnforceIf(lit)
+            elif _hard(instance):
+                ctx.model.Add(sum(vars_) >= limit)
+            else:
+                short = ctx.model.NewIntVar(0, limit, f"rt{lesson.id[:4]}")
+                ctx.model.Add(short >= limit - sum(vars_))
+                if hasattr(ctx, "penalize"):
+                    ctx.penalize(short, _weight(instance), label)
+                else:
+                    ctx.penalties.append(short * _weight(instance))
+
+
+class MinRoomTypeUses(_RoomTypeCount):
+    code = "MinRoomTypeUses"
+    sense = "min"
+
+
+class MaxRoomTypeUses(_RoomTypeCount):
+    code = "MaxRoomTypeUses"
+    sense = "max"
+
+
 class NotClassTeacherInPeriods(ClassTeacherSlotRule):
     code = "NotClassTeacherInPeriods"
     require_class_teacher = False
@@ -681,8 +1159,14 @@ HANDLERS: dict[str, ConstraintHandler] = {
     for cls in [
         TeacherUnavailable,
         RoomUnavailable,
+        SubjectUnavailable,
         ClassUnavailable,
         MaxTeacherLessonsPerDay,
+        MaxDaysPerWeek,
+        MinLessonsPerDay,
+        LunchBreak,
+        StartAfter,
+        EndBefore,
         MaxConsecutiveLessons,
         MaxTeacherWindows,
         MinTeacherWindows,
@@ -691,6 +1175,9 @@ HANDLERS: dict[str, ConstraintHandler] = {
         PreferredDay,
         PreferredRoom,
         SameRoom,
+        SameRoomAllWeek,
+        MinRoomTypeUses,
+        MaxRoomTypeUses,
         DifferentRoom,
         LessonsTogether,
         LessonsApart,

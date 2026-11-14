@@ -39,7 +39,13 @@ def execute_job(db: Session, job_id: str) -> None:
 
     try:
         if job.kind in ("generate", "repair"):
-            result = run_generate(db, job.version_id, mode=(job.payload or {}).get("mode") or "balanced", progress_cb=cb)
+            result = run_generate(
+                db,
+                job.version_id,
+                mode=(job.payload or {}).get("mode") or "balanced",
+                progress_cb=cb,
+                section_ids=(job.payload or {}).get("section_ids") or None,
+            )
             for sol in result.get("solutions") or []:
                 db.add(
                     models.GenerationSolution(
@@ -91,7 +97,18 @@ def apply_solution(db: Session, job_id: str, solution_id: str, actor: str) -> mo
     src = db.get(models.TimetableVersion, job.version_id)
     if not src:
         raise ValueError("version not found")
+    if (src.status or "") in ("published", "archived"):
+        raise ValueError("This week is published. Open a draft to change it.")
     src.status = "draft"
     src.label = f"Draft · {sol.label}"
-    apply_allocations(db, src, sol.allocations or [], actor, f"apply solution {sol.label}")
+    from app.engine.occupancy import lesson_section_ids
+
+    section_ids = set((job.payload or {}).get("section_ids") or [])
+    pinned = set()
+    if section_ids:
+        for allocation in src.allocations:
+            lesson = allocation.lesson
+            if lesson and not (set(lesson_section_ids(lesson)) & section_ids):
+                pinned.add(lesson.id)
+    apply_allocations(db, src, sol.allocations or [], actor, f"Applied solution {sol.label}", pinned_lesson_ids=pinned)
     return src
