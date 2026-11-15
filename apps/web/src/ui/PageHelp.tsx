@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CloseIcon } from "./icons";
+import Modal from "./Modal";
 import { PAGE_HELP, type HelpPageId } from "./pageHelpContent";
 
 export default function PageHelp({ page }: { page: HelpPageId }) {
@@ -28,8 +29,7 @@ export default function PageHelp({ page }: { page: HelpPageId }) {
  >
  i
  </button>
- {open && (
- <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-16 scrim" onClick={() => setOpen(false)}>
+ <Modal open={open} onClose={() => setOpen(false)} className="pt-16">
  <div
  className="pop-in bg-paper-3 rounded-xl border border-rule max-w-lg w-full max-h-[80vh] overflow-auto p-5"
  onClick={(e) => e.stopPropagation()}
@@ -56,8 +56,7 @@ export default function PageHelp({ page }: { page: HelpPageId }) {
  </section>
  ))}
  </div>
- </div>
- )}
+ </Modal>
  </>
  );
 }

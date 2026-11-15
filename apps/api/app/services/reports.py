@@ -6,7 +6,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.engine.conflicts import teacher_of
-from app.engine.occupancy import allocation_class_fields, duration_block, teacher_fields, teaching_periods
+from app.engine.occupancy import (
+    alloc_week_code,
+    allocation_class_fields,
+    duration_block,
+    normalize_week_lane,
+    teacher_fields,
+    teaching_periods,
+    week_pattern_code_map,
+)
 
 
 def _latest_version(db: Session, version_id: str | None = None, academic_year_id: str | None = None):
@@ -30,6 +38,7 @@ def _alloc_rows(db: Session, v: models.TimetableVersion) -> tuple[list[dict], li
     periods = db.query(models.Period).filter_by(time_grid_id=grid_id).order_by(models.Period.sort_order).all()
     teaching = teaching_periods(periods)
     rooms = {r.resource_id: (r.resource.name if r.resource else "") for r in db.query(models.Room).all()}
+    id_to_code = week_pattern_code_map(db)
     rows = []
     for a in v.allocations:
         les = a.lesson
@@ -40,12 +49,15 @@ def _alloc_rows(db: Session, v: models.TimetableVersion) -> tuple[list[dict], li
         block = duration_block(teaching, a.period_id, dur)
         period_ids = [p.id for p in block] if block else [a.period_id]
         classes = allocation_class_fields(les)
+        code = alloc_week_code(a, lesson=les, id_to_code=id_to_code)
         base = {
             "id": a.id,
             "lesson_id": a.lesson_id,
             "day_id": a.day_id,
             "period_id": a.period_id,
             "period_ids": period_ids,
+            "occurrence_index": a.occurrence_index or 0,
+            "week_code": code,
             "subject": les.subject.name if les.subject else "",
             "short": (les.subject.short_name or les.subject.name) if les.subject else "",
             "color": (les.subject.color if les.subject else None) or "#64748b",
@@ -59,6 +71,22 @@ def _alloc_rows(db: Session, v: models.TimetableVersion) -> tuple[list[dict], li
         for pid in period_ids:
             rows.append({**base, "period_id": pid})
     return rows, days, periods
+
+
+def _row_matches_lane(row: dict, week_lane: str | None) -> bool:
+    if not week_lane:
+        return True
+    lane = normalize_week_lane(week_lane)
+    if lane == "ALL":
+        return True
+    code = normalize_week_lane(row.get("week_code") or "ALL")
+    return code == "ALL" or code == lane
+
+
+def _filter_rows_by_lane(rows: list[dict], week_lane: str | None) -> list[dict]:
+    if not week_lane or normalize_week_lane(week_lane) == "ALL":
+        return rows
+    return [r for r in rows if _row_matches_lane(r, week_lane)]
 
 
 def _row_keys(row: dict, key: str) -> list[str]:
@@ -85,6 +113,7 @@ def _group_cards(rows: list[dict], key: str) -> list[dict]:
                     "teacher_short": row.get("teacher_short") or "",
                     "room": row["room"],
                     "color": row["color"],
+                    "week_code": row.get("week_code") or "ALL",
                 }
             )
     out = []
@@ -94,11 +123,46 @@ def _group_cards(rows: list[dict], key: str) -> list[dict]:
     return out
 
 
-def timetable_report(db: Session, version_id: str | None = None, academic_year_id: str | None = None) -> dict:
+def _load_placed_by(rows: list[dict], key: str) -> dict[str, int]:
+    """Period load for a class/teacher. Counts each allocation once (not by occurrence_index)."""
+    seen: dict[str, set[str]] = defaultdict(set)
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        start = (row.get("period_ids") or [row["period_id"]])[0]
+        if row["period_id"] != start:
+            continue
+        aid = str(row.get("id") or "")
+        if not aid:
+            continue
+        dur = max(1, len(row.get("period_ids") or [row["period_id"]]))
+        for name in _row_keys(row, key):
+            if aid in seen[name]:
+                continue
+            seen[name].add(aid)
+            counts[name] += dur
+    return counts
+
+
+def timetable_report(
+    db: Session,
+    version_id: str | None = None,
+    academic_year_id: str | None = None,
+    week_lane: str | None = None,
+) -> dict:
     v = _latest_version(db, version_id, academic_year_id)
     if not v:
-        return {"ok": False, "error": "No timetable version yet. Generate first.", "days": [], "periods": []}
+        return {
+            "ok": False,
+            "error": "No timetable version yet. Generate first.",
+            "days": [],
+            "periods": [],
+            "separate_weeks": False,
+        }
     rows, days, periods = _alloc_rows(db, v)
+    separate_weeks = any((r.get("week_code") or "ALL") in ("WEEK_A", "WEEK_B") for r in rows)
+    # JSON UI filters client-side; week_lane still used for HTML/Excel exports.
+    export_rows = _filter_rows_by_lane(rows, week_lane) if week_lane else rows
+    grid_id = v.timetable.time_grid_id if v.timetable else None
     lessons = (
         db.query(models.Lesson)
         .options(
@@ -106,67 +170,119 @@ def timetable_report(db: Session, version_id: str | None = None, academic_year_i
             joinedload(models.Lesson.subject),
             joinedload(models.Lesson.section),
             joinedload(models.Lesson.section_links),
+            joinedload(models.Lesson.week_pattern),
         )
         .all()
     )
-    if academic_year_id:
-        filtered = []
-        for les in lessons:
+    filtered = []
+    for les in lessons:
+        if grid_id and les.time_grid_id and les.time_grid_id != grid_id:
+            continue
+        if academic_year_id:
             year_id = les.section.academic_year_id if les.section else None
-            if year_id == academic_year_id:
-                filtered.append(les)
-        lessons = filtered
-    placed = defaultdict(int)
-    for row in rows:
-        placed[row["lesson_id"]] += 1
-    unplaced = []
+            if year_id and year_id != academic_year_id:
+                continue
+        filtered.append(les)
+    lessons = filtered
+
+    def _card_counts(src: list[dict]) -> dict[str, int]:
+        placed_cards: dict[str, int] = defaultdict(int)
+        seen: set[str] = set()
+        for row in src:
+            start = (row.get("period_ids") or [row["period_id"]])[0]
+            if row["period_id"] != start:
+                continue
+            aid = str(row.get("id") or "")
+            if not aid or aid in seen:
+                continue
+            seen.add(aid)
+            placed_cards[row["lesson_id"]] += 1
+        return placed_cards
+
+    def _unplaced_for(placed_cards: dict[str, int]) -> list[dict]:
+        out = []
+        for les in lessons:
+            blocks = getattr(les, "blocks", None)
+            need = len(blocks) if isinstance(blocks, list) and blocks else int(les.frequency_per_week or 0)
+            have = placed_cards.get(les.id, 0)
+            if have >= need:
+                continue
+            t = teacher_of(les)
+            classes = allocation_class_fields(les)
+            out.append(
+                {
+                    "id": les.id,
+                    "subject": les.subject.name if les.subject else "",
+                    "section": classes["section"],
+                    "teacher": t.name if t else "",
+                    "need": need,
+                    "placed": have,
+                    "missing": max(0, need - have),
+                }
+            )
+        return out
+
+    placed_all = _card_counts(rows)
+    placed_a = _card_counts(_filter_rows_by_lane(rows, "WEEK_A"))
+    placed_b = _card_counts(_filter_rows_by_lane(rows, "WEEK_B"))
+    unplaced = _unplaced_for(placed_all)
+    unplaced_a = _unplaced_for(placed_a)
+    unplaced_b = _unplaced_for(placed_b)
+    if week_lane and normalize_week_lane(week_lane) == "WEEK_A":
+        unplaced = unplaced_a
+    elif week_lane and normalize_week_lane(week_lane) == "WEEK_B":
+        unplaced = unplaced_b
+
     class_need: dict[str, int] = defaultdict(int)
     teacher_need: dict[str, int] = defaultdict(int)
     for les in lessons:
         need = (les.frequency_per_week or 0) * max(1, les.duration_periods or 1)
-        have = placed.get(les.id, 0)
         t = teacher_of(les)
         classes = allocation_class_fields(les)
-        section = classes["section"]
         for name in classes["sections"]:
             class_need[name] += need
         if t:
             teacher_need[t.name] += need
-        if have < need:
-            unplaced.append(
-                {
-                    "id": les.id,
-                    "subject": les.subject.name if les.subject else "",
-                    "section": section,
-                    "teacher": t.name if t else "",
-                    "need": les.frequency_per_week,
-                    "placed": have,
-                    "missing": max(0, les.frequency_per_week - (have // max(1, les.duration_periods or 1))),
-                }
-            )
     teaching_slots = sum(1 for p in periods if (p.period_type or "teaching") == "teaching") * max(1, len(days))
-    section_groups = _group_cards(rows, "section")
-    teacher_groups = _group_cards(rows, "teacher")
-    placed_by_teacher = {g["name"]: g["placed"] for g in teacher_groups}
-    placed_by_section = {g["name"]: g["placed"] for g in section_groups}
-    teacher_load = [
-        {
-            "name": name,
-            "required": need,
-            "placed": placed_by_teacher.get(name, 0),
-            "free": max(0, teaching_slots - placed_by_teacher.get(name, 0)),
-        }
-        for name, need in sorted(teacher_need.items())
-    ]
-    class_load = [
-        {
-            "name": name,
-            "required": need,
-            "placed": placed_by_section.get(name, 0),
-            "free": max(0, teaching_slots - placed_by_section.get(name, 0)),
-        }
-        for name, need in sorted(class_need.items())
-    ]
+    section_groups = _group_cards(export_rows, "section")
+    teacher_groups = _group_cards(export_rows, "teacher")
+
+    def _loads(placed_teacher: dict[str, int], placed_section: dict[str, int]) -> tuple[list[dict], list[dict]]:
+        teachers = [
+            {
+                "name": name,
+                "required": need,
+                "placed": placed_teacher.get(name, 0),
+                "free": max(0, teaching_slots - placed_teacher.get(name, 0)),
+            }
+            for name, need in sorted(teacher_need.items())
+        ]
+        classes = [
+            {
+                "name": name,
+                "required": need,
+                "placed": placed_section.get(name, 0),
+                "free": max(0, teaching_slots - placed_section.get(name, 0)),
+            }
+            for name, need in sorted(class_need.items())
+        ]
+        return teachers, classes
+
+    # Both = forks count once. Odd/Even loads count only that fortnight (missing Odd card → 44).
+    teacher_load_all, class_load_all = _loads(_load_placed_by(rows, "teacher"), _load_placed_by(rows, "section"))
+    teacher_load_a, class_load_a = _loads(
+        _load_placed_by(_filter_rows_by_lane(rows, "WEEK_A"), "teacher"),
+        _load_placed_by(_filter_rows_by_lane(rows, "WEEK_A"), "section"),
+    )
+    teacher_load_b, class_load_b = _loads(
+        _load_placed_by(_filter_rows_by_lane(rows, "WEEK_B"), "teacher"),
+        _load_placed_by(_filter_rows_by_lane(rows, "WEEK_B"), "section"),
+    )
+    teacher_load, class_load = teacher_load_all, class_load_all
+    if week_lane and normalize_week_lane(week_lane) == "WEEK_A":
+        teacher_load, class_load = teacher_load_a, class_load_a
+    elif week_lane and normalize_week_lane(week_lane) == "WEEK_B":
+        teacher_load, class_load = teacher_load_b, class_load_b
 
     return {
         "ok": True,
@@ -187,13 +303,17 @@ def timetable_report(db: Session, version_id: str | None = None, academic_year_i
             }
             for p in periods
         ],
+        "separate_weeks": separate_weeks,
         "sections": section_groups,
         "teachers": teacher_groups,
-        "rooms": _group_cards(rows, "room"),
-        "subjects": _group_cards(rows, "subject"),
+        "rooms": _group_cards(export_rows, "room"),
+        "subjects": _group_cards(export_rows, "subject"),
         "unplaced": unplaced,
+        "unplaced_lanes": {"WEEK_A": unplaced_a, "WEEK_B": unplaced_b, "ALL": _unplaced_for(placed_all)},
         "teacher_load": teacher_load,
         "class_load": class_load,
+        "teacher_load_lanes": {"WEEK_A": teacher_load_a, "WEEK_B": teacher_load_b, "ALL": teacher_load_all},
+        "class_load_lanes": {"WEEK_A": class_load_a, "WEEK_B": class_load_b, "ALL": class_load_all},
         "teaching_slots": teaching_slots,
     }
 

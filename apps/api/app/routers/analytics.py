@@ -39,10 +39,11 @@ def sub_load(db: Session = Depends(get_db), user=Depends(get_current_user)):
 def timetable_report_json(
     version_id: str | None = None,
     academic_year_id: str | None = None,
+    week_lane: str | None = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    return timetable_report(db, version_id, academic_year_id)
+    return timetable_report(db, version_id, academic_year_id, week_lane=week_lane)
 
 
 @router.get("/reports/timetable.html")
@@ -51,10 +52,11 @@ def timetable_html(
     academic_year_id: str | None = None,
     view: str = Query("section"),
     entity: str | None = None,
+    week_lane: str | None = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    data = timetable_report(db, version_id, academic_year_id)
+    data = timetable_report(db, version_id, academic_year_id, week_lane=week_lane)
     if not data.get("ok"):
         raise HTTPException(404, data.get("error") or "No timetable")
     return HTMLResponse(timetable_report_html(data, view=view, entity=entity))
@@ -66,10 +68,11 @@ def timetable_xlsx(
     academic_year_id: str | None = None,
     view: str = Query("section"),
     entity: str | None = None,
+    week_lane: str | None = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    data = timetable_report(db, version_id, academic_year_id)
+    data = timetable_report(db, version_id, academic_year_id, week_lane=week_lane)
     if not data.get("ok"):
         raise HTTPException(404, data.get("error") or "No timetable")
     raw = timetable_report_xlsx(data, view=view, entity=entity)

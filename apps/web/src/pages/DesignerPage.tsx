@@ -265,7 +265,15 @@ export default function DesignerPage() {
  ))}
  </select>
  {(["ALL", "WEEK_A", "WEEK_B"] as const).map((code) => (
- <button key={code} type="button" onClick={() => setLane(code)} className={`text-sm px-2 py-1 rounded ${lane === code ? "bg-accent text-accent-ink" : "bg-paper-2"}`}>
+ <button
+ key={code}
+ type="button"
+ onClick={() => {
+ if (code === lane) return;
+ setLane(code);
+ }}
+ className={`text-sm px-2 py-1 rounded ${lane === code ? "bg-accent text-accent-ink" : "bg-paper-2"}`}
+ >
  {code === "ALL" ? "Both weeks" : code === "WEEK_A" ? "Odd week" : "Even week"}
  </button>
  ))}
@@ -283,7 +291,7 @@ export default function DesignerPage() {
  )}
  </div>
  <ErrorBanner className="mx-3 mb-2" message={msg} onClear={() => setMsg("")} />
- <div key={`${view}-${lane}`} className="motion-swap">
+ <div key={`${view}-${lane}`} className="motion-week">
  <table className="w-full text-xs border-collapse">
  <thead>
  <tr>

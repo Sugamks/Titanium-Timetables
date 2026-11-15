@@ -32,14 +32,38 @@ button, a.bg-accent, a.app-sidebar-link, input, select, textarea {
   a.app-sidebar-link:hover { transform: translateX(4px); }
 }
 button:active:not(:disabled), a.bg-accent:active { transform: translateY(1px); }
-@keyframes screen-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-@keyframes pane-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+/* Opacity only on .screen-in — transform there traps position:fixed modals inside scrolled main. */
+@keyframes screen-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pane-in {
+  from { opacity: 0.45; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes toast-in { from { opacity: 0; transform: translateX(1.5rem); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(1.5rem); } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* Week Odd/Even: keep some opacity so the grid never blanks (no flicker). */
+@keyframes week-cross {
+  from { opacity: 0.4; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes week-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
 .screen-in { animation: screen-in var(--dur-long) var(--ease-out) both; }
 .motion-swap { animation: pane-in var(--dur-long) var(--ease-out) both; }
+.motion-week {
+  animation: week-cross 380ms var(--ease-out) both;
+  will-change: opacity, transform;
+}
+.motion-week .period-card {
+  animation: week-card-in 340ms var(--ease-out) both;
+}
+.motion-week td .period-card:nth-child(1) { animation-delay: 28ms; }
+.motion-week td .period-card:nth-child(2) { animation-delay: 52ms; }
+.motion-week td .period-card:nth-child(3) { animation-delay: 76ms; }
+.motion-week td .period-card:nth-child(n + 4) { animation-delay: 96ms; }
 .pop-in { animation: pop-in var(--dur-short) var(--ease-out) both; }
 .scrim, .tour-scrim, .shell-scrim.is-open { animation: fade-in var(--dur-short) var(--ease-out) both; }
 .icon-hit { position: relative; }
@@ -263,7 +287,7 @@ input[type="color"].fill-color::-moz-color-swatch { border: 0 solid transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-spin, .screen-in, .motion-swap, .toast-card, .pop-in, .tour-card, .scrim, .scrim > *, .tour-scrim, .shell-scrim.is-open, .row-editor.is-open { animation: none; }
+  .animate-spin, .screen-in, .motion-swap, .motion-week, .motion-week .period-card, .toast-card, .pop-in, .tour-card, .scrim, .scrim > *, .tour-scrim, .shell-scrim.is-open, .row-editor.is-open { animation: none; }
   .app-sidebar, .sidebar-nav a, .tour-card, .row-editor, button, a.bg-accent, a.app-sidebar-link, input, select, textarea, body { transition: none; }
 }
 

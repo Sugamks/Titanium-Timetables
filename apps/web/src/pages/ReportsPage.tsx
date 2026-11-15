@@ -26,14 +26,14 @@ export default function ReportsPage() {
     }, []);
 
     return (
-        <div className="space-y-4">
-            <header className="flex flex-wrap justify-between gap-3 items-start">
+        <div className="h-full min-h-0 flex flex-col gap-4">
+            <header className="shrink-0 flex flex-wrap justify-between gap-3 items-start">
                 <div>
                     <div className="flex items-center gap-2">
                         <h1 className="text-2xl font-semibold text-ink">Reports</h1>
                         <PageHelp page="reports" />
                     </div>
-                    <p className="text-muted text-sm mt-1">
+                    <p className="text-muted text-sm mt-1 max-w-2xl">
                         Class, teacher, subject, unplaced, and load views. Download Excel for class and staff sheets.
                     </p>
                 </div>

@@ -17,20 +17,25 @@ from app.engine.conflicts import (
 from app.engine.handlers import placement_blockers
 from app.engine.occupancy import (
     STATE_UNAVAILABLE,
+    alloc_week_code,
     allocation_view_fields,
     duration_block,
     exclusive_tokens,
     groups_by_section_map,
     lesson_band,
     lesson_rooms,
+    lesson_section_ids,
     load_availability,
+    normalize_week_lane,
     occupy_keys,
+    other_week_lane,
     slot_availability,
     teacher_fields,
     teaching_periods,
     valid_starts,
-    week_code,
     week_lanes,
+    week_pattern_code_map,
+    week_pattern_id_by_code,
 )
 from app.services.constraint_presets import relevant_constraints
 from app.services.cell_groups import extend_band_to_slot, remove_from_band, save_cell_groups
@@ -47,9 +52,15 @@ class PlaceIn(BaseModel):
     room_resource_id: str | None = None
     occurrence_index: int = 0
     allocation_id: str | None = None
+    swap_with_id: str | None = None
     lock_level: str = "none"
     stack: bool = False
     band_id: str | None = None
+    week_lane: str | None = None
+
+
+class CollapseWeekIn(BaseModel):
+    keep: str
 
 
 class CellGroupMember(BaseModel):
@@ -106,6 +117,7 @@ def version_grid(version_id: str, db: Session = Depends(get_db), user=Depends(ge
     days = db.query(models.Day).filter_by(time_grid_id=grid_id).order_by(models.Day.sort_order).all()
     periods = db.query(models.Period).filter_by(time_grid_id=grid_id).order_by(models.Period.sort_order).all()
     teaching = teaching_periods(periods)
+    id_to_code = week_pattern_code_map(db)
     allocs = []
     for a in v.allocations:
         les = a.lesson
@@ -121,7 +133,7 @@ def version_grid(version_id: str, db: Session = Depends(get_db), user=Depends(ge
             "period_ids": period_ids,
             "duration_periods": dur,
             "week_pattern_id": a.week_pattern_id,
-            "week_code": week_code(les.week_pattern) if les else "ALL",
+            "week_code": alloc_week_code(a, lesson=les, id_to_code=id_to_code),
             "room_resource_id": a.room_resource_id,
             "occurrence_index": a.occurrence_index,
             "lock_level": a.lock_level,
@@ -175,52 +187,192 @@ def _conflict_http(issues: list) -> HTTPException:
     return HTTPException(status_code=409, detail={"message": "; ".join(labels) or "Cannot place there", "issues": issues})
 
 
+def _alloc_lanes(
+    alloc: models.LessonAllocation | None,
+    lesson: models.Lesson | None = None,
+    *,
+    week_lane: str | None = None,
+    id_to_code: dict[str, str] | None = None,
+) -> set[str]:
+    """Odd (A) and Even (B) do not overlap; Every week (ALL) overlaps both."""
+    code = alloc_week_code(alloc, lesson=lesson, week_lane=week_lane, id_to_code=id_to_code)
+    return set(week_lanes(code))
+
+
+def _alloc_section_ids(alloc: models.LessonAllocation | None, lesson: models.Lesson | None = None) -> set[str]:
+    les = lesson if lesson is not None else (alloc.lesson if alloc is not None else None)
+    return set(lesson_section_ids(les) or []) if les else set()
+
+
+def _resolve_place_pattern_id(db: Session, week_lane: str | None, lesson: models.Lesson | None) -> str | None:
+    lane = normalize_week_lane(week_lane) if week_lane else "ALL"
+    if lane in ("WEEK_A", "WEEK_B"):
+        return week_pattern_id_by_code(db, lane)
+    if lesson and lesson.week_pattern_id:
+        return lesson.week_pattern_id
+    return week_pattern_id_by_code(db, "ALL")
+
+
+def _fork_all_allocation(
+    db: Session,
+    moving: models.LessonAllocation,
+    active_lane: str,
+    id_to_code: dict[str, str],
+) -> None:
+    """Split Every-week card into Odd+Even; keep edit on active lane, clone other at old slot."""
+    current = alloc_week_code(moving, lesson=moving.lesson, id_to_code=id_to_code)
+    if current != "ALL" or active_lane not in ("WEEK_A", "WEEK_B"):
+        if active_lane in ("WEEK_A", "WEEK_B"):
+            moving.week_pattern_id = week_pattern_id_by_code(db, active_lane)
+        return
+    other = other_week_lane(active_lane)
+    other_id = week_pattern_id_by_code(db, other)
+    active_id = week_pattern_id_by_code(db, active_lane)
+    if not other_id or not active_id:
+        raise HTTPException(
+            400,
+            "Odd/Even week patterns are missing. Add WEEK_A and WEEK_B before editing Separate weeks.",
+        )
+    clone = models.LessonAllocation(
+        lesson_id=moving.lesson_id,
+        version_id=moving.version_id,
+        day_id=moving.day_id,
+        period_id=moving.period_id,
+        room_resource_id=moving.room_resource_id,
+        occurrence_index=moving.occurrence_index,
+        lock_level=moving.lock_level,
+        week_pattern_id=other_id,
+    )
+    db.add(clone)
+    moving.week_pattern_id = active_id
+    db.flush()
+
+
 @router.post("/allocations")
 def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
     if body.allocation_id and str(body.allocation_id).startswith("preview-"):
         raise HTTPException(400, "This is a preview. Click Use this timetable, then you can swap periods.")
     _require_draft(db, body.version_id)
+    lesson_load = (
+        joinedload(models.Lesson.week_pattern),
+        joinedload(models.Lesson.section_links),
+        joinedload(models.Lesson.section),
+    )
+    id_to_code = week_pattern_code_map(db)
+    active_lane = normalize_week_lane(body.week_lane) if body.week_lane else None
     incoming = db.get(models.Lesson, body.lesson_id)
+    if incoming:
+        incoming = (
+            db.query(models.Lesson)
+            .options(*lesson_load)
+            .filter_by(id=body.lesson_id)
+            .first()
+        )
     slot_allocs = (
         db.query(models.LessonAllocation)
+        .options(joinedload(models.LessonAllocation.lesson).options(*lesson_load))
         .filter_by(version_id=body.version_id, day_id=body.day_id, period_id=body.period_id)
         .all()
     )
+    moving = None
+    if body.allocation_id:
+        moving = (
+            db.query(models.LessonAllocation)
+            .options(joinedload(models.LessonAllocation.lesson).options(*lesson_load))
+            .filter_by(id=body.allocation_id)
+            .first()
+        )
+        if moving and active_lane in ("WEEK_A", "WEEK_B"):
+            _fork_all_allocation(db, moving, active_lane, id_to_code)
+            id_to_code = week_pattern_code_map(db)
+    move_lanes = _alloc_lanes(moving, incoming, week_lane=active_lane, id_to_code=id_to_code)
+    move_sections = _alloc_section_ids(moving, incoming)
+    # Odd/Even share a cell visually only when lanes overlap. Ignore the other fortnight half.
+    lane_peers = [
+        a
+        for a in slot_allocs
+        if a.id != body.allocation_id and (_alloc_lanes(a, id_to_code=id_to_code) & move_lanes)
+    ]
+    # Parallel classes share a period; only same-class cards are swap/stack peers.
+    class_peers = [
+        a
+        for a in lane_peers
+        if not move_sections or (_alloc_section_ids(a) & move_sections)
+    ]
     band = None
     if body.band_id:
         band = db.get(models.LessonBand, body.band_id)
     if incoming and not band:
         band = lesson_band(incoming)
     same_band_slot = bool(
-        band and slot_allocs and any(lesson_band(a.lesson) and lesson_band(a.lesson).id == band.id for a in slot_allocs)
+        band and lane_peers and any(lesson_band(a.lesson) and lesson_band(a.lesson).id == band.id for a in lane_peers)
     )
     if band and (body.band_id or same_band_slot):
         try:
             return extend_band_to_slot(db, body.version_id, body.day_id, body.period_id, band.id)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+    payload = body.model_dump()
+    if active_lane:
+        payload["week_lane"] = active_lane
     issues = allocation_conflicts(
         db,
         body.version_id,
-        body.model_dump(),
+        payload,
         ignore_id=body.allocation_id,
     )
     occupant = None
-    if body.allocation_id and not body.stack:
-        occupant = (
+    target_day_id = body.day_id
+    target_period_id = body.period_id
+    if body.allocation_id and not body.stack and body.swap_with_id:
+        # Explicit two-card swap — do not guess by slot/lane.
+        explicit = (
             db.query(models.LessonAllocation)
-            .filter_by(version_id=body.version_id, day_id=body.day_id, period_id=body.period_id)
-            .filter(models.LessonAllocation.id != body.allocation_id)
+            .options(joinedload(models.LessonAllocation.lesson).options(*lesson_load))
+            .filter_by(id=body.swap_with_id, version_id=body.version_id)
             .first()
         )
+        if not explicit:
+            raise HTTPException(400, "The other card is not on this timetable.")
+        if explicit.id == body.allocation_id:
+            raise HTTPException(400, "Pick two different cards to swap.")
+        # Must sit in the drop cell (or a multi-period block that covers it).
+        if explicit.day_id != body.day_id:
+            raise HTTPException(400, "That card is not in this period.")
+        if explicit.period_id != body.period_id:
+            v = db.get(models.TimetableVersion, body.version_id)
+            exp_les = explicit.lesson
+            exp_dur = max(1, (exp_les.duration_periods if exp_les else 1) or 1)
+            teaching = teaching_periods(
+                db.query(models.Period)
+                .filter_by(time_grid_id=v.timetable.time_grid_id)
+                .order_by(models.Period.sort_order)
+                .all()
+            ) if v and v.timetable else []
+            cover = duration_block(teaching, explicit.period_id, exp_dur) if teaching else None
+            cover_ids = [p.id for p in cover] if cover else [explicit.period_id]
+            if body.period_id not in cover_ids:
+                raise HTTPException(400, "That card is not in this period.")
+        if active_lane in ("WEEK_A", "WEEK_B"):
+            _fork_all_allocation(db, explicit, active_lane, id_to_code)
+        occupant = explicit
+        # Use the other card's real start period (not a duration block continuation cell).
+        target_day_id = explicit.day_id
+        target_period_id = explicit.period_id
+    elif body.allocation_id and not body.stack and class_peers:
+        occupant = class_peers[0]
+        if active_lane in ("WEEK_A", "WEEK_B"):
+            _fork_all_allocation(db, occupant, active_lane, id_to_code)
     waive = {"class"} if body.stack else set()
-    if body.stack and incoming and any(a.lesson_id == incoming.id for a in slot_allocs):
+    if body.stack and incoming and any(a.lesson_id == incoming.id for a in class_peers):
         waive.add("teacher")
     blocking = [i for i in issues if not i["ok"] and i["code"] not in waive]
+    # Explicit swap always proceeds; conflict list is advisory for the move-into-empty path.
     if blocking and not occupant:
         raise _conflict_http(issues)
+    place_pattern_id = _resolve_place_pattern_id(db, active_lane, incoming)
     if body.allocation_id:
-        a = db.get(models.LessonAllocation, body.allocation_id)
+        a = moving or db.get(models.LessonAllocation, body.allocation_id)
         if not a:
             raise HTTPException(400, "That lesson is not on the saved timetable yet. Click Use this timetable, then swap.")
         if a.lock_level == "full":
@@ -230,9 +382,13 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
             if occupant.lock_level == "full":
                 raise HTTPException(400, "This card is locked. Unlock it before moving it.")
             occupant.day_id, occupant.period_id = a.day_id, a.period_id
-        a.day_id = body.day_id
-        a.period_id = body.period_id
+        a.day_id = target_day_id
+        a.period_id = target_period_id
         a.room_resource_id = body.room_resource_id or a.room_resource_id
+        if place_pattern_id:
+            a.week_pattern_id = place_pattern_id
+        elif not a.week_pattern_id and incoming and incoming.week_pattern_id:
+            a.week_pattern_id = incoming.week_pattern_id
         if body.lock_level in ("lesson", "full"):
             a.lock_level = body.lock_level
         label = _card_label(db, a.lesson_id)
@@ -243,7 +399,7 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
                 actor=actor_label(user),
                 reason=f"Swapped {label}." if occupant else f"Moved {label}.",
                 old_value=old,
-                new_value={"day_id": body.day_id, "period_id": body.period_id},
+                new_value={"day_id": target_day_id, "period_id": target_period_id, "week_lane": active_lane or "ALL"},
             )
         )
     else:
@@ -257,6 +413,7 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
             room_resource_id=body.room_resource_id,
             occurrence_index=body.occurrence_index,
             lock_level=body.lock_level,
+            week_pattern_id=place_pattern_id,
         )
         db.add(a)
         db.flush()
@@ -274,13 +431,27 @@ def place(body: PlaceIn, db: Session = Depends(get_db), user=Depends(require_rol
 
 
 @router.delete("/allocations/{aid}")
-def dealloc(aid: str, db: Session = Depends(get_db), user=Depends(require_roles("constructor"))):
-    a = db.get(models.LessonAllocation, aid)
+def dealloc(
+    aid: str,
+    week_lane: str | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(require_roles("constructor")),
+):
+    a = (
+        db.query(models.LessonAllocation)
+        .options(joinedload(models.LessonAllocation.lesson).joinedload(models.Lesson.week_pattern))
+        .filter_by(id=aid)
+        .first()
+    )
     if not a:
         raise HTTPException(404)
     _require_draft(db, a.version_id)
     if a.lock_level == "full":
         raise HTTPException(400, "This card is locked. Unlock it before removing it.")
+    id_to_code = week_pattern_code_map(db)
+    active_lane = normalize_week_lane(week_lane) if week_lane else None
+    if active_lane in ("WEEK_A", "WEEK_B"):
+        _fork_all_allocation(db, a, active_lane, id_to_code)
     label = _card_label(db, a.lesson_id)
     db.add(
         models.ChangeEvent(
@@ -288,12 +459,70 @@ def dealloc(aid: str, db: Session = Depends(get_db), user=Depends(require_roles(
             entity_id=aid,
             actor=actor_label(user),
             reason=f"Removed {label} from the week.",
-            old_value={"lesson_id": a.lesson_id},
+            old_value={"lesson_id": a.lesson_id, "week_lane": active_lane or alloc_week_code(a, id_to_code=id_to_code)},
         )
     )
     db.delete(a)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/versions/{version_id}/collapse-week")
+def collapse_week(
+    version_id: str,
+    body: CollapseWeekIn,
+    db: Session = Depends(get_db),
+    user=Depends(require_roles("constructor")),
+):
+    _require_draft(db, version_id)
+    keep = normalize_week_lane(body.keep)
+    if keep not in ("WEEK_A", "WEEK_B"):
+        raise HTTPException(400, "Pick Odd week or Even week as the shared default.")
+    other = other_week_lane(keep)
+    id_to_code = week_pattern_code_map(db)
+    all_id = week_pattern_id_by_code(db, "ALL")
+    allocs = (
+        db.query(models.LessonAllocation)
+        .options(joinedload(models.LessonAllocation.lesson).joinedload(models.Lesson.week_pattern))
+        .filter_by(version_id=version_id)
+        .all()
+    )
+    groups: dict[tuple[str, int], list[models.LessonAllocation]] = {}
+    for a in allocs:
+        groups.setdefault((a.lesson_id, a.occurrence_index or 0), []).append(a)
+    kept = 0
+    dropped = 0
+    for rows in groups.values():
+        ranked = []
+        for r in rows:
+            code = alloc_week_code(r, lesson=r.lesson, id_to_code=id_to_code)
+            ranked.append((code, r))
+        keeper = next((r for code, r in ranked if code == keep), None)
+        if keeper is None:
+            keeper = next((r for code, r in ranked if code == "ALL"), None)
+        if keeper is None:
+            for _, r in ranked:
+                db.delete(r)
+                dropped += 1
+            continue
+        keeper.week_pattern_id = all_id
+        kept += 1
+        for _, r in ranked:
+            if r.id == keeper.id:
+                continue
+            db.delete(r)
+            dropped += 1
+    db.add(
+        models.ChangeEvent(
+            entity="timetable_version",
+            entity_id=version_id,
+            actor=actor_label(user),
+            reason=f"Collapsed Separate weeks to Both using {keep}.",
+            new_value={"keep": keep, "other": other, "kept": kept, "dropped": dropped},
+        )
+    )
+    db.commit()
+    return {"ok": True, "keep": keep, "kept": kept, "dropped": dropped}
 
 
 @router.post("/allocations/{aid}/lock")
@@ -375,7 +604,14 @@ def cell_group_remove(body: BandRemoveIn, db: Session = Depends(get_db), user=De
 
 
 @router.get("/possible-slots")
-def possible_slots(version_id: str, lesson_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def possible_slots(
+    version_id: str,
+    lesson_id: str,
+    week_lane: str | None = None,
+    allocation_id: str | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     v = db.get(models.TimetableVersion, version_id)
     les = db.get(models.Lesson, lesson_id)
     if not v or not les:
@@ -389,7 +625,9 @@ def possible_slots(version_id: str, lesson_id: str, db: Session = Depends(get_db
     cells = load_availability(db)
     constraints = relevant_constraints(db, v)
     gmap = groups_by_section_map(db)
-    code = week_code(les.week_pattern)
+    id_to_code = week_pattern_code_map(db)
+    moving = db.get(models.LessonAllocation, allocation_id) if allocation_id else None
+    code = alloc_week_code(moving, lesson=les, week_lane=week_lane, id_to_code=id_to_code)
     lanes = week_lanes(code)
     tokens = set(exclusive_tokens(les, gmap))
     room = lesson_rooms(les)
@@ -408,8 +646,10 @@ def possible_slots(version_id: str, lesson_id: str, db: Session = Depends(get_db
         .all()
     )
     for alloc in allocs:
+        if allocation_id and alloc.id == allocation_id:
+            continue
         other = alloc.lesson
-        other_code = week_code(other.week_pattern) if other else "ALL"
+        other_code = alloc_week_code(alloc, lesson=other, id_to_code=id_to_code)
         cover = duration_block(teaching, alloc.period_id, max(1, (other.duration_periods if other else 1) or 1))
         other_periods = [p.id for p in cover] if cover else [alloc.period_id]
         occupied.update(
