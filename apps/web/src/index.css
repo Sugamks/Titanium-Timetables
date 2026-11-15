@@ -73,6 +73,12 @@ button:active:not(:disabled), a.bg-accent:active { transform: translateY(1px); }
 @media (hover: hover) {
   .app-sidebar-link:hover { background: var(--app-sidebar-hover); }
 }
+.app-sidebar-active {
+  background: var(--app-sidebar-active);
+  color: var(--color-ink);
+  border-radius: var(--radius-card);
+}
+.app-sidebar-active .app-sidebar-muted { color: var(--color-muted); }
 .app-sidebar-chip {
   color: var(--color-ink);
   background: transparent;

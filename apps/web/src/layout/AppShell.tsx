@@ -189,7 +189,7 @@ export default function AppShell() {
                       className={({ isActive }) =>
                         `flex items-center rounded-md text-sm ${
                           compact ? "justify-center px-0 py-2.5" : "px-3 py-2"
-                        } ${isActive ? "bg-accent text-accent-ink" : "app-sidebar-link"}`
+                        } ${isActive ? "app-sidebar-active" : "app-sidebar-link"}`
                       }
                     >
                       {compact ? (
@@ -214,7 +214,7 @@ export default function AppShell() {
               title={user?.name || "Profile"}
               className={`w-full flex items-center gap-2.5 rounded-lg text-left transition-colors ${
                 compact ? "justify-center min-h-10" : "px-1.5 py-1.5"
-              } ${location.pathname === "/profile" ? "bg-accent text-accent-ink" : "app-sidebar-link"}`}
+              } ${location.pathname === "/profile" ? "app-sidebar-active" : "app-sidebar-link"}`}
             >
               <span className="w-8 h-8 rounded-full flex-shrink-0 app-sidebar-avatar flex items-center justify-center overflow-hidden">
                 <span className="font-semibold text-sm">

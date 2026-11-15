@@ -273,33 +273,6 @@ def install_available_update() -> Path:
     return msi_path
 
 
-def apply_msi_script() -> str:
-    return r"""param(
-  [Parameter(Mandatory = $true)][int]$PidToWait,
-  [Parameter(Mandatory = $true)][string]$Msi,
-  [Parameter(Mandatory = $true)][string]$Exe
-)
-$ErrorActionPreference = "Stop"
-$log = Join-Path (Split-Path -Parent $Msi) "msiexec-update.log"
-while (Get-Process -Id $PidToWait -ErrorAction SilentlyContinue) {
-  Start-Sleep -Seconds 1
-}
-Get-Process TitaniumTimetables -ErrorAction SilentlyContinue |
-  Where-Object { $_.Id -ne $PidToWait } |
-  Stop-Process -Force -ErrorAction SilentlyContinue
-# Drop leftover silent installs of this same MSI (double-click / prior hung run).
-Get-CimInstance Win32_Process -Filter "Name='msiexec.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Msi*" } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Seconds 2
-# One ArgumentList string so paths with spaces stay quoted for msiexec.
-$argList = "/i `"$Msi`" /passive /norestart /l*v `"$log`""
-$proc = Start-Process -FilePath msiexec.exe -ArgumentList $argList -Wait -PassThru
-if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { exit $proc.ExitCode }
-if (Test-Path -LiteralPath $Exe) { Start-Process -FilePath $Exe }
-"""
-
-
 def launch_helper(source: Path) -> None:
     if source.suffix.lower() == ".msi":
         _launch_msi(source)
@@ -333,30 +306,47 @@ def launch_helper(source: Path) -> None:
 
 
 def _launch_msi(msi_path: Path) -> None:
+    """Write a .cmd with quoted paths, then wait for this process to exit and run it.
+
+    PowerShell Start-Process -ArgumentList strips quotes around paths with spaces
+    (e.g. C:\\Users\\NEXT ELEMENT\\...), which makes msiexec show its help dialog.
+    """
     install = Path(sys.executable).resolve().parent
     exe = install / "TitaniumTimetables.exe"
-    script = _updates_dir() / "apply-update.ps1"
-    script.write_text(apply_msi_script(), encoding="utf-8")
+    folder = _updates_dir()
+    log = folder / "msiexec-update.log"
+    bat = folder / "apply-update-run.cmd"
+    pid = os.getpid()
+    bat.write_text(
+        "\r\n".join(
+            [
+                "@echo off",
+                f'taskkill /PID {pid} /F >nul 2>&1',
+                ":wait",
+                f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul',
+                "if not errorlevel 1 (",
+                "  timeout /t 1 /nobreak >nul",
+                "  goto wait",
+                ")",
+                'taskkill /IM TitaniumTimetables.exe /F >nul 2>&1',
+                "timeout /t 2 /nobreak >nul",
+                f'msiexec /i "{msi_path}" /passive /norestart /l*v "{log}"',
+                "set EXITCODE=%ERRORLEVEL%",
+                "if %EXITCODE%==0 goto launch",
+                "if %EXITCODE%==3010 goto launch",
+                "exit /b %EXITCODE%",
+                ":launch",
+                f'if exist "{exe}" start "" "{exe}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     kwargs: dict = {"close_fds": True}
     if os.name == "nt":
         kwargs["creationflags"] = 0x00000200 | 0x08000000
-    subprocess.Popen(
-        [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-PidToWait",
-            str(os.getpid()),
-            "-Msi",
-            str(msi_path),
-            "-Exe",
-            str(exe),
-        ],
-        **kwargs,
-    )
+    # cmd /c with quoted bat path — list form keeps the spaces intact.
+    subprocess.Popen(["cmd.exe", "/c", str(bat)], **kwargs)
 
 
 def http_get(url: str, user: str, token: str, limit: int) -> bytes:
