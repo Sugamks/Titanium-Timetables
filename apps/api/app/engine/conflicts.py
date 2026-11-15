@@ -7,6 +7,7 @@ from app.engine.handlers import placement_blockers
 from app.engine.occupancy import (
     STATE_PREFERRED,
     STATE_UNAVAILABLE,
+    alloc_week_code,
     duration_block,
     exclusive_tokens,
     groups_by_section_map,
@@ -20,8 +21,8 @@ from app.engine.occupancy import (
     availability_state,
     slot_availability,
     teaching_periods,
-    week_code,
     week_lanes,
+    week_pattern_code_map,
 )
 from app.services.time_grids import break_label
 
@@ -82,7 +83,14 @@ def allocation_conflicts(db: Session, version_id: str, candidate: dict, ignore_i
         return [{"code": "duration", "ok": False, "label": f"No contiguous {dur}-period block from this start"}]
 
     period_ids = [p.id for p in block]
-    code = week_code(lesson.week_pattern)
+    id_to_code = week_pattern_code_map(db)
+    moving = db.get(models.LessonAllocation, ignore_id) if ignore_id else None
+    code = alloc_week_code(
+        moving,
+        lesson=lesson,
+        week_lane=candidate.get("week_lane"),
+        id_to_code=id_to_code,
+    )
     lanes = week_lanes(code)
     gmap = groups_by_section_map(db)
     tokens = exclusive_tokens(lesson, gmap)
@@ -127,14 +135,14 @@ def allocation_conflicts(db: Session, version_id: str, candidate: dict, ignore_i
     occupied = set()
     for alloc in existing:
         other = alloc.lesson
-        other_code = week_code(other.week_pattern) if other else "ALL"
+        other_code = alloc_week_code(alloc, lesson=other, id_to_code=id_to_code)
         other_lanes = week_lanes(other_code)
         if not set(lanes) & set(other_lanes):
             continue
         other_periods = _allocation_cover(db, alloc, teaching)
         if not set(period_ids) & set(other_periods):
             continue
-        occupied.update(occupy_keys(exclusive_tokens(other, gmap), alloc.day_id, other_periods, other_lanes))
+        occupied.update(occupy_keys(exclusive_tokens(other, gmap) if other else set(), alloc.day_id, other_periods, other_lanes))
 
     proposed = occupy_keys(tokens, candidate["day_id"], period_ids, lanes)
     clash = [k for k in proposed if k in occupied]
@@ -199,6 +207,8 @@ def allocation_conflicts(db: Session, version_id: str, candidate: dict, ignore_i
         and a.lesson
         and a.lesson.subject_id == lesson.subject_id
         and set(lesson_section_ids(a.lesson)) & set(section_ids_here)
+        # Odd/Even: COM on Even must not block placing COM on Odd the same weekday.
+        and (set(week_lanes(alloc_week_code(a, lesson=a.lesson, id_to_code=id_to_code))) & set(lanes))
     ]
     already = len(same_day)
     if already >= max_pd:
@@ -240,13 +250,14 @@ def hard_health(db: Session, version_id: str) -> dict:
         return {"ok": False, "checks": {}}
     teaching = _grid_teaching(db, version.timetable.time_grid_id)
     gmap = groups_by_section_map(db)
+    id_to_code = week_pattern_code_map(db)
     occupied = defaultdict(list)
     allocs = db.query(models.LessonAllocation).filter_by(version_id=version_id).all()
     for a in allocs:
         les = a.lesson
-        code = week_code(les.week_pattern) if les else "ALL"
+        code = alloc_week_code(a, lesson=les, id_to_code=id_to_code)
         pids = _allocation_cover(db, a, teaching)
-        keys = occupy_keys(exclusive_tokens(les, gmap), a.day_id, pids, week_lanes(code))
+        keys = occupy_keys(exclusive_tokens(les, gmap) if les else set(), a.day_id, pids, week_lanes(code))
         for k in keys:
             occupied[k].append(a.id)
 
@@ -254,8 +265,14 @@ def hard_health(db: Session, version_id: str) -> dict:
         return {str(k): v for k, v in occupied.items() if k[0].startswith(prefix) and len(v) > 1}
 
     lessons = db.query(models.Lesson).filter_by(time_grid_id=version.timetable.time_grid_id).all()
-    by_lesson = defaultdict(int)
+    # Odd/Even forks share occurrence_index — count once per card, not once per lane.
+    seen_occ: set[tuple[str, int]] = set()
+    by_lesson: dict[str, int] = defaultdict(int)
     for a in allocs:
+        key = (a.lesson_id, a.occurrence_index or 0)
+        if key in seen_occ:
+            continue
+        seen_occ.add(key)
         by_lesson[a.lesson_id] += 1
     incomplete = []
     for les in lessons:

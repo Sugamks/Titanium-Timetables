@@ -12,6 +12,7 @@ import ErrorBanner from "../ui/ErrorBanner";
 import { inputClass } from "../ui/SearchSelect";
 import { shortFromName } from "../ui/shortName";
 import SaveFileButton from "../ui/TimetableFile";
+import Modal from "../ui/Modal";
 
 function apiError(e: any): string {
   const d = e?.detail;
@@ -609,8 +610,8 @@ export default function TimetablePage() {
         </ul>
       </section>
 
-      {editOpen && selected && !deleted && (
-        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4 overflow-auto" onClick={() => !updating && setEditOpen(false)}>
+      {editOpen && selected && !deleted ? (
+      <Modal open onClose={() => !updating && setEditOpen(false)}>
           <form
             onSubmit={saveTemplate}
             onClick={(e) => e.stopPropagation()}
@@ -735,11 +736,11 @@ export default function TimetablePage() {
               </button>
             </div>
           </form>
-        </div>
-      )}
+      </Modal>
+      ) : null}
 
-      {confirm && (
-        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4" onClick={() => !confirmBusy && setConfirm(null)}>
+      {confirm ? (
+      <Modal open onClose={() => !confirmBusy && setConfirm(null)}>
           <div className="bg-paper-3 rounded-xl border w-full max-w-md mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-lg font-semibold">
@@ -787,11 +788,11 @@ export default function TimetablePage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
+      ) : null}
 
-      {check && (
-        <div className="fixed inset-0 z-50 scrim flex items-start justify-center p-4" onClick={() => setCheck(null)}>
+      {check ? (
+      <Modal open onClose={() => setCheck(null)}>
           <div className="bg-paper-3 rounded-xl border w-full max-w-lg mt-24 p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -826,8 +827,8 @@ export default function TimetablePage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </Modal>
+      ) : null}
 
       {selected && (
         <>

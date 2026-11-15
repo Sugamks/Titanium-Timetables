@@ -86,7 +86,8 @@ const STEPS: Step[] = [
     items: [
       "Subject, one or more classes, one or more teachers, periods per week, and length in bells.",
       "Blocks overrides that shape. 2,1,1,1 means one double and three singles.",
-      "Every week fills that period in both weeks. Odd week leaves it free on Even week. Even week is the reverse. There is no third alternating week.",
+      "Every week fills that period in both weeks. Odd week leaves it free on Even week. Even week is the reverse.",
+      "On Construction, Both weeks keeps one shared layout. Separate weeks lets Odd and Even diverge; return to Both asks which week becomes the default.",
       "An Odd week card and an Even week card may share a period. An Every week card clashes with both.",
       "Use Odd/Even for fortnightly subjects (e.g. Art one week, Dance the next). The app does not map calendar dates to Odd or Even.",
     ],

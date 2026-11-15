@@ -6,6 +6,7 @@ import { formatDateTime } from "../../ui/dates";
 import ClockPicker from "../../ui/ClockPicker";
 import { IconButton } from "../../ui/icons";
 import { chipStyle } from "../../ui/colors";
+import Modal from "../../ui/Modal";
 
 type Cover = {
  id: string;
@@ -803,7 +804,7 @@ function AdhocModal({
  }
 
  return (
- <div className="fixed inset-0 z-40 scrim flex items-center justify-center p-4" onClick={onClose}>
+ <Modal open align="center" onClose={onClose}>
  <div className="bg-paper-3 rounded-lg shadow-none w-full max-w-md p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
  <div className="flex items-center justify-between">
  <h3 className="font-medium">Add absence</h3>
@@ -856,6 +857,6 @@ function AdhocModal({
  Add o substitution day
  </button>
  </div>
- </div>
+ </Modal>
  );
 }

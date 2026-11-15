@@ -60,11 +60,11 @@ export const PAGE_HELP: Record<
         heading: "Odd week and Even week",
         items: [
           "Three patterns share one bell grid: Every week, Odd week, and Even week. There is no third alternating week.",
-          "Every week fills that period in both weeks. Teacher, class, and room are busy in that slot on Odd week and on Even week.",
-          "Odd week fills Odd week only. The same period stays free on Even week. Even week is the reverse.",
-          "An Odd week card and an Even week card may share one period. Two Every week cards may not. An Every week card clashes with both.",
-          "Use for fortnightly / alternating subjects. Example: Grade 1A Monday period 1 is Art on Odd week and Dance on Even week — two lessons, same slot, different week labels.",
-          "Set the label on the lesson (Construct → lesson card). The app does not map calendar dates to Odd or Even; your school decides which real week is which.",
+          "On Construction use Both weeks for one shared layout, or Separate weeks to edit Odd and Even on their own.",
+          "In Separate weeks, a move on Odd stays on Odd. Even keeps its own copy. They do not re-sync.",
+          "Return to Both weeks asks which layout wins (Odd or Even). The other week’s separate placements are dropped.",
+          "An Odd week card and an Even week card may share one period. An Every week card clashes with both.",
+          "Lesson cards can still be labelled Every / Odd / Even. The app does not map calendar dates to Odd or Even.",
         ],
       },
       {
@@ -176,9 +176,9 @@ export const PAGE_HELP: Record<
       {
         heading: "What you can do",
         items: [
-          "Switch class, teacher, subject, unplaced, teacher load, and class load.",
-          "Download saves an Excel matrix: classes (or staff) as rows, days across the top, period numbers under each day, and color-coded subject codes.",
-          "Unplaced lists lesson cards that still need a slot.",
+          "Pick the template, then the version (draft / published). Every tab uses that version’s week.",
+          "If Construct used Separate weeks, Odd week / Even week buttons appear. Unplaced and load follow the selected week.",
+          "Download saves an Excel matrix for the current template and week.",
         ],
       },
       {
@@ -186,6 +186,7 @@ export const PAGE_HELP: Record<
         items: [
           "Reports need a timetable version with placements. Generate (and Use) first.",
           "Load compares placed periods against teaching slots in the template.",
+          "Changing the template reloads all report tabs for that template only.",
         ],
       },
     ],
@@ -358,22 +359,23 @@ export const PAGE_HELP: Record<
   },
   designer: {
     title: "Designer",
-    intro: "Drag cards onto the week. Generate on Construct still builds Odd week and Even week together.",
+    intro: "Drag cards onto the week. Generate still builds one draft; use Separate weeks after Use to diverge Odd and Even.",
     sections: [
       {
         heading: "Odd week and Even week",
         items: [
-          "Both weeks shows every card. Odd week shows Every week plus Odd week cards. Even week shows Every week plus Even week cards.",
-          "An Every week card clashes with both. An Odd week card does not clash with an Even week card in the same period.",
-          "Filter the grid to place or check one fortnight half. Generate still solves both weeks in one run.",
+          "Both weeks is the shared layout. Separate weeks shows Odd and Even buttons; edits pin to that week only.",
+          "First edit in Separate forks an Every-week card so the other week keeps the old slot.",
+          "Switching back to Both weeks asks whether Odd or Even becomes the shared default.",
+          "An Odd card does not clash with an Even card in the same period. An Every-week card clashes with both.",
         ],
       },
       {
         heading: "Drag, swap, and undo",
         items: [
           "On drag, a legal period turns green and a blocked period turns red. The cell names the blocking rule.",
-          "Drop onto an occupied card to swap the two cards.",
-          "Swap two cards also works by turning the control on and clicking two placed cards.",
+          "Drag a card onto another card, then choose Swap (exchange periods) or Stack (share the period).",
+          "Green ring on a subject means you can drop there. Empty legal cells show a dashed green outline.",
           "Undo reverses the last place, move, or swap.",
         ],
       },

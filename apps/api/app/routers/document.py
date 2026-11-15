@@ -11,6 +11,7 @@ from app.database import get_db
 from app.services.ttl_dialog import pick_ttl, schedule_restart
 from app.services.ttl_file import (
     assert_document,
+    checkpoint_current,
     copy_document,
     current_path,
     keep_only_template,
@@ -86,6 +87,18 @@ def document_info(user=Depends(get_current_user)):
         "name": path.name if path else None,
         "mode": "library" if library else "file",
         "files": list_saved_files() if library else [],
+    }
+
+
+@router.post("/document/flush")
+def document_flush(user=Depends(require_roles("constructor", "scheduler_admin"))):
+    """Write SQLite WAL into the open .ttl. Draft stays draft. Does not publish."""
+    path = current_path()
+    checkpoint_current()
+    return {
+        "ok": True,
+        "path": str(path) if path else None,
+        "name": path.name if path else None,
     }
 
 

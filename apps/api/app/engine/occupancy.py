@@ -21,13 +21,65 @@ def week_code(pattern: models.WeekPattern | None, pattern_id: str | None = None)
     return "ALL"
 
 
-def week_lanes(code: str | None) -> list[str]:
+def normalize_week_lane(code: str | None) -> str:
     c = (code or "ALL").upper()
     if c in ("WEEK_A", "A"):
-        return ["A"]
+        return "WEEK_A"
     if c in ("WEEK_B", "B"):
+        return "WEEK_B"
+    return "ALL"
+
+
+def other_week_lane(code: str | None) -> str:
+    c = normalize_week_lane(code)
+    if c == "WEEK_A":
+        return "WEEK_B"
+    if c == "WEEK_B":
+        return "WEEK_A"
+    return "ALL"
+
+
+def week_lanes(code: str | None) -> list[str]:
+    c = normalize_week_lane(code)
+    if c == "WEEK_A":
+        return ["A"]
+    if c == "WEEK_B":
         return ["B"]
     return ["A", "B"]
+
+
+def week_pattern_id_by_code(db: Session, code: str | None) -> str | None:
+    want = normalize_week_lane(code)
+    row = db.query(models.WeekPattern).filter_by(code=want).first()
+    return row.id if row else None
+
+
+def week_pattern_code_map(db: Session) -> dict[str, str]:
+    return {w.id: w.code for w in db.query(models.WeekPattern).all() if w.id}
+
+
+def alloc_week_code(
+    alloc: models.LessonAllocation | None = None,
+    *,
+    lesson: models.Lesson | None = None,
+    week_pattern_id: str | None = None,
+    week_lane: str | None = None,
+    id_to_code: dict[str, str] | None = None,
+    db: Session | None = None,
+) -> str:
+    """Allocation week pattern wins; else lesson; week_lane overrides for a proposed edit."""
+    if week_lane is not None and str(week_lane).strip() != "":
+        return normalize_week_lane(week_lane)
+    pid = week_pattern_id
+    if pid is None and alloc is not None:
+        pid = getattr(alloc, "week_pattern_id", None)
+    if pid:
+        if id_to_code is not None:
+            return normalize_week_lane(id_to_code.get(pid) or "ALL")
+        if db is not None:
+            return normalize_week_lane(pattern_code_for(db, pid))
+    les = lesson if lesson is not None else (alloc.lesson if alloc is not None else None)
+    return week_code(les.week_pattern if les else None)
 
 
 def is_teaching(period) -> bool:
