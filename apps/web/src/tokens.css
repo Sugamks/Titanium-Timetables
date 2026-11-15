@@ -27,6 +27,8 @@
   --app-text: var(--color-ink); --app-muted: var(--color-muted);
   --app-sidebar: var(--color-paper-2); --app-sidebar-text: var(--color-ink); --app-sidebar-muted: var(--color-muted);
   --app-sidebar-border: var(--color-rule); --app-sidebar-hover: color-mix(in oklch, var(--color-ink) 10%, var(--color-paper-2)); --app-sidebar-control: var(--color-paper-3);
+  /* Profile/nav active wash: dark keeps sampled navy; light = same hue, a bit darker than pale /15. */
+  --app-sidebar-active: color-mix(in srgb, #292c45 42%, white);
   --app-select: var(--color-accent); --app-scroll: var(--color-rule); --app-scroll-hover: var(--color-ink);
   --clock-face: var(--color-paper-3); --clock-face-stroke: var(--color-rule); --clock-dot: var(--color-paper);
   --clock-dot-stroke: var(--color-rule); --clock-numeral: var(--color-ink); --clock-accent: var(--color-accent);
@@ -35,6 +37,7 @@
 html.dark {
   color-scheme: dark;
   --app-sidebar-hover: var(--color-paper);
+  --app-sidebar-active: #292c45;
   --color-paper: oklch(16% 0.012 266); --color-paper-2: oklch(19% 0.013 266); --color-paper-3: oklch(22% 0.014 266);
   --color-ink: oklch(94% 0.012 266); --color-ink-2: oklch(88% 0.012 266); --color-muted: oklch(78% 0.014 266);
   --color-rule: oklch(32% 0.014 266);

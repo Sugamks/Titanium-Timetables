@@ -62,6 +62,12 @@ Build steps for the `.exe` and the MSI are in [INSTALL.md](INSTALL.md).
 
 `npm run dev` proxies `/v1` and `/health` to `http://127.0.0.1:8000`. Start `apps/api/run.py` in another terminal before using the dev UI. `serve.py` is a separate process on port `8765` and serves the built UI.
 
+## Releases
+
+Release Please builds the changelog from conventional commits (`fix:`, `feat:`). **Squash-merge** feature PRs into `master`. A normal merge commit repeats the PR title in its body, so the same change shows twice with two hashes. In the GitHub repo settings, allow only squash merge.
+
+In-app update notes already drop duplicate lines and commit hashes.
+
 ## Health
 
 `GET /health` returns `ok`, the service name, and the institution name.

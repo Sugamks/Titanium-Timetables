@@ -57,14 +57,14 @@ export const PAGE_HELP: Record<
         ],
       },
       {
-        heading: "Week A and Week B",
+        heading: "Odd week and Even week",
         items: [
-          "Every week, Week A, and Week B share one bell grid. You cannot add Week C.",
-          "Every week occupies the period in both weeks. That teacher, class, and room are busy on Monday period 1 in Week A and in Week B.",
-          "Week A occupies Week A only. The same period is free in Week B. Week B is the reverse.",
-          "A Week A card and a Week B card may share a period. Two Every week cards may not. An Every week card clashes with both.",
-          "Use two lessons when one period alternates. Example: Grade 1A Monday period 1 is Art on Week A and Dance on Week B.",
-          "The label is on the lesson. The app does not know that a calendar date is Week A.",
+          "Three patterns share one bell grid: Every week, Odd week, and Even week. There is no third alternating week.",
+          "Every week fills that period in both weeks. Teacher, class, and room are busy in that slot on Odd week and on Even week.",
+          "Odd week fills Odd week only. The same period stays free on Even week. Even week is the reverse.",
+          "An Odd week card and an Even week card may share one period. Two Every week cards may not. An Every week card clashes with both.",
+          "Use for fortnightly / alternating subjects. Example: Grade 1A Monday period 1 is Art on Odd week and Dance on Even week — two lessons, same slot, different week labels.",
+          "Set the label on the lesson (Construct → lesson card). The app does not map calendar dates to Odd or Even; your school decides which real week is which.",
         ],
       },
       {
@@ -358,13 +358,14 @@ export const PAGE_HELP: Record<
   },
   designer: {
     title: "Designer",
-    intro: "Drag cards onto the week. Generate on Construct still builds Week A and Week B together.",
+    intro: "Drag cards onto the week. Generate on Construct still builds Odd week and Even week together.",
     sections: [
       {
-        heading: "Week A and Week B",
+        heading: "Odd week and Even week",
         items: [
-          "Both weeks shows every card. Week A shows Every week plus Week A. Week B shows Every week plus Week B.",
-          "An Every week card clashes with both. A Week A card does not clash with a Week B card.",
+          "Both weeks shows every card. Odd week shows Every week plus Odd week cards. Even week shows Every week plus Even week cards.",
+          "An Every week card clashes with both. An Odd week card does not clash with an Even week card in the same period.",
+          "Filter the grid to place or check one fortnight half. Generate still solves both weeks in one run.",
         ],
       },
       {
